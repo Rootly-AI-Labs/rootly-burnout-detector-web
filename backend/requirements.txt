@@ -1,0 +1,28 @@
+# FastAPI and server
+fastapi[all]
+uvicorn[standard]
+
+# Database
+sqlalchemy
+alembic
+
+# Authentication & OAuth
+authlib
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+
+# HTTP client for API calls
+httpx
+
+# Environment and configuration
+python-dotenv
+pydantic
+pydantic-settings
+
+# We'll add MCP and existing project dependencies later
+# pytz
+# python-dateutil
+
+# Development
+pytest
