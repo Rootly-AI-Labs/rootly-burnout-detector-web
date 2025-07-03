@@ -1,0 +1,27 @@
+"""
+Analysis model for storing burnout analysis results.
+"""
+from sqlalchemy import Column, Integer, String, DateTime, Text, ForeignKey, JSON
+from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
+from .base import Base
+
+class Analysis(Base):
+    __tablename__ = "analyses"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    rootly_integration_id = Column(Integer, ForeignKey("rootly_integrations.id"), nullable=True)
+    status = Column(String(50), default="pending")  # pending, running, completed, failed
+    config = Column(JSON, nullable=True)  # Analysis configuration (date range, etc.)
+    results = Column(JSON, nullable=True)  # Analysis results (team scores, member details)
+    error_message = Column(Text, nullable=True)  # Error details if failed
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    
+    # Relationships
+    user = relationship("User", back_populates="analyses")
+    rootly_integration = relationship("RootlyIntegration", back_populates="analyses")
+    
+    def __repr__(self):
+        return f"<Analysis(id={self.id}, user_id={self.user_id}, status='{self.status}')>"
