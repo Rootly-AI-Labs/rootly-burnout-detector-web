@@ -19,7 +19,8 @@ class RootlyAPIClient:
         self.base_url = settings.ROOTLY_API_BASE_URL
         self.headers = {
             "Authorization": f"Bearer {api_token}",
-            "Content-Type": "application/vnd.api+json"
+            "Content-Type": "application/vnd.api+json",
+            "Accept": "application/vnd.api+json"
         }
     
     async def test_connection(self) -> Dict[str, Any]:
@@ -29,11 +30,21 @@ class RootlyAPIClient:
                 response = await client.get(
                     f"{self.base_url}/v1/users",
                     headers=self.headers,
-                    params={"page[size]": 1}
+                    params={"page[size]": 1},
+                    timeout=30.0
                 )
                 
                 if response.status_code == 200:
                     data = response.json()
+                    
+                    # Safety check for data
+                    if data is None:
+                        logger.error("API response json() returned None")
+                        return {
+                            "status": "error",
+                            "message": "Invalid JSON response from API",
+                            "error_code": "INVALID_RESPONSE"
+                        }
                     
                     # Log full response to examine available organization data
                     print(f"DEBUG: Full Rootly API response: {data}")
@@ -118,19 +129,31 @@ class RootlyAPIClient:
         try:
             async with httpx.AsyncClient() as client:
                 while len(all_users) < limit:
+                    # URL encode the parameters manually since httpx doesn't encode brackets properly
+                    params_encoded = urlencode({
+                        "page[number]": page,
+                        "page[size]": page_size
+                    })
+                    
                     response = await client.get(
-                        f"{self.base_url}/v1/users",
+                        f"{self.base_url}/v1/users?{params_encoded}",
                         headers=self.headers,
-                        params={
-                            "page[number]": page,
-                            "page[size]": page_size
-                        }
+                        timeout=30.0
                     )
                     
                     if response.status_code != 200:
+                        logger.error(f"Rootly API request failed: {response.status_code} {response.text}")
+                        logger.error(f"Request URL: {self.base_url}/v1/users")
+                        logger.error(f"Request headers: Content-Type: {self.headers.get('Content-Type', 'N/A')}")
                         raise Exception(f"API request failed: {response.status_code} {response.text}")
                     
                     data = response.json()
+                    
+                    # Safety check for data
+                    if data is None:
+                        logger.error("Users API response json() returned None")
+                        break
+                    
                     users = data.get("data", [])
                     
                     if not users:
@@ -164,25 +187,74 @@ class RootlyAPIClient:
         
         try:
             async with httpx.AsyncClient() as client:
+                # First test basic access to incidents endpoint
+                test_response = await client.get(
+                    f"{self.base_url}/v1/incidents",
+                    headers=self.headers,
+                    params={"page[size]": 1},
+                    timeout=30.0
+                )
+                
+                logger.info(f"Basic incidents test: {test_response.status_code}")
+                if test_response.status_code == 404:
+                    logger.error("Basic incidents endpoint test failed - checking permissions")
+                    raise Exception("Cannot access incidents endpoint. Please verify your Rootly API token has 'incidents:read' permission.")
+                elif test_response.status_code != 200:
+                    logger.error(f"Basic incidents endpoint test failed: {test_response.status_code} {test_response.text}")
+                    raise Exception(f"Basic incidents endpoint failed: {test_response.status_code}")
+                else:
+                    logger.info("Basic incidents endpoint test passed!")
+                
                 while len(all_incidents) < limit:
+                    # Use smaller page size to reduce timeout risk
+                    actual_page_size = min(page_size, 20)  # Start with smaller pages
                     params = {
                         "page[number]": page,
-                        "page[size]": page_size,
-                        "filter[created_at][gte]": start_date.isoformat(),
-                        "filter[created_at][lte]": end_date.isoformat(),
-                        "include": "severity,user,started_by,resolved_by"
+                        "page[size]": actual_page_size,
+                        # Temporarily comment out date filters to test basic access
+                        # "filter[created_at][gte]": start_date.isoformat(),
+                        # "filter[created_at][lte]": end_date.isoformat(),
+                        # "include": "severity,user,started_by,resolved_by"
                     }
                     
-                    response = await client.get(
-                        f"{self.base_url}/v1/incidents",
-                        headers=self.headers,
-                        params=params
-                    )
+                    # URL encode the parameters manually since httpx doesn't encode brackets properly
+                    params_encoded = urlencode(params)
+                    
+                    logger.info(f"Requesting incidents page {page} with params: {params}")
+                    logger.info(f"Request URL: {self.base_url}/v1/incidents")
+                    logger.info(f"Request headers: {self.headers}")
+                    
+                    try:
+                        response = await client.get(
+                            f"{self.base_url}/v1/incidents?{params_encoded}",
+                            headers=self.headers,
+                            timeout=30.0  # Increase timeout to 30 seconds
+                        )
+                        logger.info(f"Got response status: {response.status_code}")
+                    except Exception as request_error:
+                        logger.error(f"Request failed with exception: {request_error}")
+                        logger.error(f"Exception type: {type(request_error).__name__}")
+                        raise request_error
                     
                     if response.status_code != 200:
-                        raise Exception(f"API request failed: {response.status_code} {response.text}")
+                        error_detail = response.text
+                        logger.error(f"Rootly API request failed: {response.status_code} {error_detail}")
+                        logger.error(f"Request URL: {self.base_url}/v1/incidents")
+                        logger.error(f"Request headers: Content-Type: {self.headers.get('Content-Type', 'N/A')}")
+                        
+                        # Provide more helpful error message for common issues
+                        if response.status_code == 404 and "not found or unauthorized" in error_detail.lower():
+                            raise Exception(f"Rootly API access denied. Please ensure your API token has 'incidents:read' permission and access to incident data. Error: {response.status_code} {error_detail}")
+                        else:
+                            raise Exception(f"API request failed: {response.status_code} {error_detail}")
                     
                     data = response.json()
+                    
+                    # Safety check for data
+                    if data is None:
+                        logger.error("Incidents API response json() returned None")
+                        break
+                    
                     incidents = data.get("data", [])
                     
                     if not incidents:
@@ -252,4 +324,19 @@ class RootlyAPIClient:
             
         except Exception as e:
             logger.error(f"Data collection failed: {e}")
-            raise
+            # Return minimal data structure instead of failing completely
+            return {
+                "users": [],
+                "incidents": [],
+                "collection_metadata": {
+                    "timestamp": datetime.now().isoformat(),
+                    "days_analyzed": days_back,
+                    "total_users": 0,
+                    "total_incidents": 0,
+                    "error": str(e),
+                    "date_range": {
+                        "start": (datetime.now() - timedelta(days=days_back)).isoformat(),
+                        "end": datetime.now().isoformat()
+                    }
+                }
+            }
