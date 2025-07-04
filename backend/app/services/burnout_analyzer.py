@@ -81,12 +81,21 @@ class BurnoutAnalyzerService:
             logger.info(f"TRACE: Extracted {len(users)} users, {len(incidents)} incidents")
             
             # Analyze team burnout
-            team_analysis = self._analyze_team_data(
-                users, 
-                incidents, 
-                metadata,
-                include_weekends
-            )
+            try:
+                logger.info(f"TRACE: About to call _analyze_team_data with {len(users)} users, {len(incidents)} incidents")
+                team_analysis = self._analyze_team_data(
+                    users, 
+                    incidents, 
+                    metadata,
+                    include_weekends
+                )
+                logger.info(f"TRACE: _analyze_team_data completed successfully")
+            except Exception as e:
+                logger.error(f"TRACE: Error in _analyze_team_data: {e}")
+                logger.error(f"TRACE: Users data type: {type(users)}, length: {len(users) if users else 'N/A'}")
+                logger.error(f"TRACE: Incidents data type: {type(incidents)}, length: {len(incidents) if incidents else 'N/A'}")
+                logger.error(f"TRACE: Metadata data type: {type(metadata)}")
+                raise
             
             # Calculate overall team health
             team_health = self._calculate_team_health(team_analysis["members"])
@@ -243,18 +252,27 @@ class BurnoutAnalyzerService:
             attrs = incident.get("attributes", {}) if incident else {}
             incident_users = set()
             
-            # Extract all users involved in the incident
+            # Extract all users involved in the incident with comprehensive null safety
             # Creator/Reporter
-            if attrs.get("user", {}).get("data", {}).get("id"):
-                incident_users.add(str(attrs["user"]["data"]["id"]))
+            user_data = attrs.get("user")
+            if user_data and isinstance(user_data, dict):
+                data = user_data.get("data")
+                if data and isinstance(data, dict) and data.get("id"):
+                    incident_users.add(str(data["id"]))
             
             # Started by (acknowledged)
-            if attrs.get("started_by", {}).get("data", {}).get("id"):
-                incident_users.add(str(attrs["started_by"]["data"]["id"]))
+            started_by_data = attrs.get("started_by")
+            if started_by_data and isinstance(started_by_data, dict):
+                data = started_by_data.get("data")
+                if data and isinstance(data, dict) and data.get("id"):
+                    incident_users.add(str(data["id"]))
             
             # Resolved by
-            if attrs.get("resolved_by", {}).get("data", {}).get("id"):
-                incident_users.add(str(attrs["resolved_by"]["data"]["id"]))
+            resolved_by_data = attrs.get("resolved_by")
+            if resolved_by_data and isinstance(resolved_by_data, dict):
+                data = resolved_by_data.get("data")
+                if data and isinstance(data, dict) and data.get("id"):
+                    incident_users.add(str(data["id"]))
             
             # Add incident to each involved user
             for user_id in incident_users:
@@ -291,6 +309,11 @@ class BurnoutAnalyzerService:
                     "incident_load": 0,
                     "response_time": 0
                 },
+                "maslach_dimensions": {
+                    "emotional_exhaustion": 0,
+                    "depersonalization": 0,
+                    "personal_accomplishment": 10
+                },
                 "metrics": {
                     "incidents_per_week": 0,
                     "after_hours_percentage": 0,
@@ -308,11 +331,16 @@ class BurnoutAnalyzerService:
             include_weekends
         )
         
-        # Calculate burnout factors (0-10 scale for each)
+        # Calculate Maslach dimensions
+        dimensions = self._calculate_maslach_dimensions(metrics)
+        
+        # Calculate burnout factors for backward compatibility
         factors = self._calculate_burnout_factors(metrics)
         
-        # Calculate overall burnout score (weighted average)
-        burnout_score = self._calculate_burnout_score(factors)
+        # Calculate overall burnout score using Maslach methodology
+        burnout_score = (dimensions["emotional_exhaustion"] * 0.4 + 
+                        dimensions["depersonalization"] * 0.3 + 
+                        (10 - dimensions["personal_accomplishment"]) * 0.3)
         
         # Determine risk level
         risk_level = self._determine_risk_level(burnout_score)
@@ -325,6 +353,7 @@ class BurnoutAnalyzerService:
             "risk_level": risk_level,
             "incident_count": len(incidents),
             "factors": factors,
+            "maslach_dimensions": dimensions,
             "metrics": metrics
         }
     
@@ -364,8 +393,17 @@ class BurnoutAnalyzerService:
                 if response_time is not None:
                     response_times.append(response_time)
             
-            # Severity
-            severity = attrs.get("severity", {}).get("data", {}).get("attributes", {}).get("name", "unknown").lower()
+            # Severity with null safety
+            severity = "unknown"
+            severity_data = attrs.get("severity")
+            if severity_data and isinstance(severity_data, dict):
+                data = severity_data.get("data")
+                if data and isinstance(data, dict):
+                    attributes = data.get("attributes")
+                    if attributes and isinstance(attributes, dict):
+                        name = attributes.get("name")
+                        if name and isinstance(name, str):
+                            severity = name.lower()
             severity_counts[severity] += 1
         
         # Calculate averages and percentages
@@ -382,106 +420,137 @@ class BurnoutAnalyzerService:
             "severity_distribution": dict(severity_counts)
         }
     
-    def _calculate_burnout_factors(self, metrics: Dict[str, Any]) -> Dict[str, float]:
-        """Calculate individual burnout factors on a 0-10 scale."""
-        factors = {}
+    def _calculate_maslach_dimensions(self, metrics: Dict[str, Any]) -> Dict[str, float]:
+        """Calculate Maslach Burnout Inventory dimensions (0-10 scale each)."""
+        # Currently only implementing incident-based calculations (70% weight)
+        # GitHub (15%) and Slack (15%) components to be added later
         
-        # Workload factor (based on incidents per week)
+        # Emotional Exhaustion (40% of final score)
+        emotional_exhaustion = self._calculate_emotional_exhaustion_incident(metrics)
+        
+        # Depersonalization (30% of final score)
+        depersonalization = self._calculate_depersonalization_incident(metrics)
+        
+        # Personal Accomplishment (30% of final score, inverted)
+        personal_accomplishment = self._calculate_personal_accomplishment_incident(metrics)
+        
+        return {
+            "emotional_exhaustion": round(emotional_exhaustion, 2),
+            "depersonalization": round(depersonalization, 2),
+            "personal_accomplishment": round(personal_accomplishment, 2)
+        }
+    
+    def _calculate_emotional_exhaustion_incident(self, metrics: Dict[str, Any]) -> float:
+        """Calculate Emotional Exhaustion from incident data (0-10 scale)."""
+        # Incident frequency score
         ipw = metrics["incidents_per_week"]
-        thresholds = self.thresholds["incidents_per_week"]
-        if ipw <= thresholds["low"]:
-            factors["workload"] = (ipw / thresholds["low"]) * 3
-        elif ipw <= thresholds["medium"]:
-            factors["workload"] = 3 + ((ipw - thresholds["low"]) / (thresholds["medium"] - thresholds["low"])) * 3
-        elif ipw <= thresholds["high"]:
-            factors["workload"] = 6 + ((ipw - thresholds["medium"]) / (thresholds["high"] - thresholds["medium"])) * 3
-        else:
-            factors["workload"] = min(10, 9 + (ipw - thresholds["high"]) / thresholds["high"])
+        incident_frequency_score = min(10, (ipw / 3) * 10)
         
-        # After-hours factor
+        # After hours score
         ahp = metrics["after_hours_percentage"]
-        ah_thresholds = self.thresholds["after_hours_percentage"]
-        if ahp <= ah_thresholds["low"]:
-            factors["after_hours"] = (ahp / ah_thresholds["low"]) * 3
-        elif ahp <= ah_thresholds["medium"]:
-            factors["after_hours"] = 3 + ((ahp - ah_thresholds["low"]) / (ah_thresholds["medium"] - ah_thresholds["low"])) * 3
-        elif ahp <= ah_thresholds["high"]:
-            factors["after_hours"] = 6 + ((ahp - ah_thresholds["medium"]) / (ah_thresholds["high"] - ah_thresholds["medium"])) * 3
-        else:
-            factors["after_hours"] = min(10, 9 + (ahp - ah_thresholds["high"]) / ah_thresholds["high"])
+        after_hours_score = min(10, ahp * 20)
         
-        # Weekend work factor
-        wp = metrics["weekend_percentage"]
-        w_thresholds = self.thresholds["weekend_percentage"]
-        if wp <= w_thresholds["low"]:
-            factors["weekend_work"] = (wp / w_thresholds["low"]) * 3
-        elif wp <= w_thresholds["medium"]:
-            factors["weekend_work"] = 3 + ((wp - w_thresholds["low"]) / (w_thresholds["medium"] - w_thresholds["low"])) * 3
-        elif wp <= w_thresholds["high"]:
-            factors["weekend_work"] = 6 + ((wp - w_thresholds["medium"]) / (w_thresholds["high"] - w_thresholds["medium"])) * 3
-        else:
-            factors["weekend_work"] = min(10, 9 + (wp - w_thresholds["high"]) / w_thresholds["high"])
-        
-        # Incident load factor (severity-weighted)
-        severity_dist = metrics["severity_distribution"]
-        weighted_incidents = 0
-        for severity, count in severity_dist.items():
-            weight = self.thresholds["severity_weight"].get(severity, 1.0)
-            weighted_incidents += count * weight
-        
-        # Normalize by weeks
-        days_analyzed = 30  # Default assumption
-        weighted_per_week = (weighted_incidents / days_analyzed) * 7
-        
-        # Scale to 0-10
-        if weighted_per_week <= 5:
-            factors["incident_load"] = weighted_per_week * 2
-        else:
-            factors["incident_load"] = min(10, 10)
-        
-        # Response time factor
+        # Resolution time score (using response time as proxy)
         art = metrics["avg_response_time_minutes"]
-        rt_thresholds = self.thresholds["avg_response_time_minutes"]
-        if art <= rt_thresholds["low"]:
-            factors["response_time"] = (art / rt_thresholds["low"]) * 3
-        elif art <= rt_thresholds["medium"]:
-            factors["response_time"] = 3 + ((art - rt_thresholds["low"]) / (rt_thresholds["medium"] - rt_thresholds["low"])) * 3
-        elif art <= rt_thresholds["high"]:
-            factors["response_time"] = 6 + ((art - rt_thresholds["medium"]) / (rt_thresholds["high"] - rt_thresholds["medium"])) * 3
-        else:
-            factors["response_time"] = min(10, 9 + (art - rt_thresholds["high"]) / rt_thresholds["high"])
+        resolution_time_score = min(10, (art / 60) * 10)  # Normalize to hours
         
-        # Round all factors
+        # Clustering score (simplified - assume 20% clustering for now)
+        clustering_score = min(10, 0.2 * 15)  # Placeholder
+        
+        # Mean of all components
+        return (incident_frequency_score + after_hours_score + resolution_time_score + clustering_score) / 4
+    
+    def _calculate_depersonalization_incident(self, metrics: Dict[str, Any]) -> float:
+        """Calculate Depersonalization from incident data (0-10 scale)."""
+        # Escalation score (using severity as proxy)
+        severity_dist = metrics["severity_distribution"]
+        high_severity_count = severity_dist.get("high", 0) + severity_dist.get("critical", 0)
+        total_incidents = sum(severity_dist.values()) if severity_dist else 1
+        escalation_rate = high_severity_count / total_incidents if total_incidents > 0 else 0
+        escalation_score = min(10, escalation_rate * 10)
+        
+        # Solo work score (assume 30% solo work for now)
+        solo_work_score = min(10, 0.3 * 10)  # Placeholder
+        
+        # Response trend score (assume stable for now)
+        response_trend_score = 0  # Placeholder
+        
+        # Communication score (assume average communication for now)
+        communication_score = 5  # Placeholder
+        
+        # Mean of all components
+        return (escalation_score + solo_work_score + response_trend_score + communication_score) / 4
+    
+    def _calculate_personal_accomplishment_incident(self, metrics: Dict[str, Any]) -> float:
+        """Calculate Personal Accomplishment from incident data (0-10 scale)."""
+        # Resolution success score (assume 80% success rate for now)
+        resolution_success_score = 8.0  # Placeholder
+        
+        # Improvement score (assume stable performance for now)
+        improvement_score = 5.0  # Placeholder
+        
+        # Complexity score (using severity distribution)
+        severity_dist = metrics["severity_distribution"]
+        high_severity_count = severity_dist.get("high", 0) + severity_dist.get("critical", 0)
+        total_incidents = sum(severity_dist.values()) if severity_dist else 1
+        high_severity_rate = high_severity_count / total_incidents if total_incidents > 0 else 0
+        complexity_score = high_severity_rate * 10
+        
+        # Knowledge sharing score (assume minimal for now)
+        knowledge_sharing_score = 2.0  # Placeholder
+        
+        # Mean of all components
+        return (resolution_success_score + improvement_score + complexity_score + knowledge_sharing_score) / 4
+    
+    def _calculate_burnout_factors(self, metrics: Dict[str, Any]) -> Dict[str, float]:
+        """Calculate individual burnout factors for backward compatibility."""
+        # Keep existing factor calculation for UI compatibility
+        dimensions = self._calculate_maslach_dimensions(metrics)
+        
+        # Map dimensions to legacy factors for UI
+        factors = {
+            "workload": dimensions["emotional_exhaustion"] * 0.6,  # Primary component
+            "after_hours": min(10, metrics["after_hours_percentage"] * 20),
+            "weekend_work": min(10, metrics["weekend_percentage"] * 25),
+            "incident_load": dimensions["emotional_exhaustion"] * 0.4,
+            "response_time": min(10, metrics["avg_response_time_minutes"] / 6)  # Normalize
+        }
+        
         return {k: round(v, 2) for k, v in factors.items()}
     
     def _calculate_burnout_score(self, factors: Dict[str, float]) -> float:
-        """Calculate overall burnout score from individual factors."""
-        # Weighted average of factors
-        weights = {
-            "workload": 0.3,
-            "after_hours": 0.25,
-            "weekend_work": 0.2,
-            "incident_load": 0.15,
-            "response_time": 0.1
-        }
+        """Calculate overall burnout score using Maslach methodology."""
+        # First get the metrics to calculate proper dimensions
+        # For now, we'll use the factors to approximate dimensions
         
-        total_score = 0
-        total_weight = 0
+        # Approximate Emotional Exhaustion from factors
+        emotional_exhaustion = (factors.get("workload", 0) * 0.4 + 
+                              factors.get("after_hours", 0) * 0.3 + 
+                              factors.get("incident_load", 0) * 0.3)
         
-        for factor, weight in weights.items():
-            if factor in factors:
-                total_score += factors[factor] * weight
-                total_weight += weight
+        # Approximate Depersonalization from factors
+        depersonalization = (factors.get("response_time", 0) * 0.5 + 
+                           factors.get("workload", 0) * 0.3 + 
+                           factors.get("weekend_work", 0) * 0.2)
         
-        return total_score / total_weight if total_weight > 0 else 0
+        # Approximate Personal Accomplishment (inverted)
+        personal_accomplishment = 10 - (factors.get("response_time", 0) * 0.3 + 
+                                       factors.get("workload", 0) * 0.4 + 
+                                       factors.get("incident_load", 0) * 0.3)
+        personal_accomplishment = max(0, personal_accomplishment)
+        
+        # Calculate final score using Maslach weights
+        burnout_score = (emotional_exhaustion * 0.4 + 
+                        depersonalization * 0.3 + 
+                        (10 - personal_accomplishment) * 0.3)
+        
+        return burnout_score
     
     def _determine_risk_level(self, burnout_score: float) -> str:
-        """Determine risk level based on burnout score."""
-        if burnout_score >= 7:
-            return "critical"
-        elif burnout_score >= 5:
+        """Determine risk level based on burnout score using Maslach methodology."""
+        if burnout_score >= 7.0:
             return "high"
-        elif burnout_score >= 3:
+        elif burnout_score >= 4.0:
             return "medium"
         else:
             return "low"
@@ -497,14 +566,19 @@ class BurnoutAnalyzerService:
                 "members_at_risk": 0
             }
         
-        # Calculate averages and distributions
-        burnout_scores = [m["burnout_score"] for m in member_analyses]
-        avg_burnout = sum(burnout_scores) / len(burnout_scores)
+        # Calculate averages and distributions with null safety
+        burnout_scores = [m.get("burnout_score", 0) for m in member_analyses if m and isinstance(m, dict)]
+        avg_burnout = sum(burnout_scores) / len(burnout_scores) if burnout_scores else 0
         
-        # Count risk levels
-        risk_dist = {"low": 0, "medium": 0, "high": 0, "critical": 0}
+        # Count risk levels (updated for 3-tier system)
+        risk_dist = {"low": 0, "medium": 0, "high": 0}
         for member in member_analyses:
-            risk_dist[member["risk_level"]] += 1
+            if member and isinstance(member, dict):
+                risk_level = member.get("risk_level", "low")
+                if risk_level in risk_dist:
+                    risk_dist[risk_level] += 1
+                else:
+                    risk_dist["low"] += 1
         
         # Calculate overall health score (inverse of burnout)
         overall_score = 10 - avg_burnout
@@ -524,7 +598,7 @@ class BurnoutAnalyzerService:
             "risk_distribution": risk_dist,
             "average_burnout_score": round(avg_burnout, 2),
             "health_status": health_status,
-            "members_at_risk": risk_dist["high"] + risk_dist["critical"]
+            "members_at_risk": risk_dist["high"]
         }
     
     def _generate_insights(
@@ -534,14 +608,15 @@ class BurnoutAnalyzerService:
     ) -> List[Dict[str, Any]]:
         """Generate insights from the analysis."""
         insights = []
-        members = team_analysis["members"]
+        members = team_analysis.get("members", []) if team_analysis else []
         
-        # Team-level insights
-        if team_health["members_at_risk"] > 0:
+        # Team-level insights with null safety
+        members_at_risk = team_health.get("members_at_risk", 0) if team_health else 0
+        if members_at_risk > 0:
             insights.append({
                 "type": "warning",
                 "category": "team",
-                "message": f"{team_health['members_at_risk']} team members are at high or critical burnout risk",
+                "message": f"{members_at_risk} team members are at high burnout risk",
                 "priority": "high"
             })
         
@@ -586,24 +661,35 @@ class BurnoutAnalyzerService:
     ) -> List[str]:
         """Generate actionable recommendations based on analysis."""
         recommendations = []
-        members = team_analysis["members"]
+        members = team_analysis.get("members", []) if team_analysis else []
         
-        # Team health recommendations
-        if team_health["health_status"] in ["poor", "fair"]:
+        # Team health recommendations with null safety
+        health_status = team_health.get("health_status", "unknown") if team_health else "unknown"
+        members_at_risk = team_health.get("members_at_risk", 0) if team_health else 0
+        
+        if health_status in ["poor", "fair"]:
             recommendations.append("Consider implementing or reviewing on-call rotation schedules to distribute load more evenly")
         
-        if team_health["members_at_risk"] > 0:
-            recommendations.append(f"Schedule 1-on-1s with the {team_health['members_at_risk']} team members at high/critical risk")
+        if members_at_risk > 0:
+            recommendations.append(f"Schedule 1-on-1s with the {members_at_risk} team members at high risk")
         
         # Pattern-based recommendations
         if members:
-            # After-hours pattern
-            avg_after_hours = sum(m["metrics"]["after_hours_percentage"] for m in members) / len(members)
+            # After-hours pattern with null safety
+            after_hours_values = [
+                m.get("metrics", {}).get("after_hours_percentage", 0) 
+                for m in members if m and isinstance(m, dict)
+            ]
+            avg_after_hours = sum(after_hours_values) / len(after_hours_values) if after_hours_values else 0
             if avg_after_hours > 0.25:
                 recommendations.append("Implement follow-the-sun support or adjust business hours coverage")
             
-            # Weekend pattern
-            avg_weekend = sum(m["metrics"]["weekend_percentage"] for m in members) / len(members)
+            # Weekend pattern with null safety
+            weekend_values = [
+                m.get("metrics", {}).get("weekend_percentage", 0) 
+                for m in members if m and isinstance(m, dict)
+            ]
+            avg_weekend = sum(weekend_values) / len(weekend_values) if weekend_values else 0
             if avg_weekend > 0.15:
                 recommendations.append("Review weekend on-call compensation and rotation frequency")
             
@@ -612,13 +698,18 @@ class BurnoutAnalyzerService:
             if workload_variance > 0.5:
                 recommendations.append("Incident load is unevenly distributed - consider load balancing strategies")
             
-            # Response time
-            avg_response = sum(m["metrics"]["avg_response_time_minutes"] for m in members if m["metrics"]["avg_response_time_minutes"] > 0) / len(members) if members else 0
+            # Response time with null safety
+            response_values = [
+                m.get("metrics", {}).get("avg_response_time_minutes", 0) 
+                for m in members 
+                if m and isinstance(m, dict) and m.get("metrics", {}).get("avg_response_time_minutes", 0) > 0
+            ]
+            avg_response = sum(response_values) / len(response_values) if response_values else 0
             if avg_response > 30:
                 recommendations.append("Review alerting and escalation procedures to improve response times")
         
-        # Always include a positive recommendation
-        if team_health["health_status"] in ["excellent", "good"]:
+        # Always include a positive recommendation with null safety
+        if health_status in ["excellent", "good"]:
             recommendations.append("Continue current practices and monitor for changes in team health metrics")
         
         return recommendations
@@ -644,7 +735,7 @@ class BurnoutAnalyzerService:
         if not members:
             return 0
         
-        incident_counts = [m["incident_count"] for m in members]
+        incident_counts = [m.get("incident_count", 0) for m in members if m and isinstance(m, dict)]
         if not incident_counts:
             return 0
         

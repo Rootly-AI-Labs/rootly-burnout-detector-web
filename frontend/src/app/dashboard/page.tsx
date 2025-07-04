@@ -9,7 +9,8 @@ import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import {
   Line,
@@ -26,6 +27,7 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
+  Cell,
 } from "recharts"
 import {
   Activity,
@@ -43,6 +45,7 @@ import {
   RefreshCw,
   X,
   AlertCircle,
+  Trash2,
 } from "lucide-react"
 import Image from "next/image"
 import { useRouter } from "next/navigation"
@@ -87,6 +90,7 @@ interface AnalysisResult {
   created_at: string
   status: string
   time_range: number
+  error_message?: string
   teamName?: string // For display purposes
   timeRange?: string // For display purposes
   overallScore?: number // For display purposes
@@ -108,26 +112,31 @@ interface AnalysisResult {
         low: number
         medium: number
         high: number
-        critical: number
       }
       health_status: string
     }
-    individual_analysis: Array<{
-      user_id: string
-      name: string
-      email: string
-      burnout_score: number
-      risk_level: string
-      factors: {
-        workload: number
-        after_hours: number
-        weekend_work: number
-        incident_load: number
-        response_time: number
-      }
-      incident_count: number
-      avg_response_time_hours: number
-    }>
+    team_analysis: {
+      members: Array<{
+        user_id: string
+        user_name: string
+        user_email: string
+        burnout_score: number
+        risk_level: string
+        factors: {
+          workload: number
+          after_hours: number
+          weekend_work: number
+          incident_load: number
+          response_time: number
+        }
+        incident_count: number
+        metrics: {
+          avg_response_time_minutes: number
+          after_hours_percentage: number
+          weekend_percentage: number
+        }
+      }>
+    }
     insights: Array<{
       type: string
       message: string
@@ -138,6 +147,14 @@ interface AnalysisResult {
       message: string
       priority: string
     }>
+    partial_data?: {
+      users: Array<any>
+      incidents: Array<any>
+      metadata: any
+    }
+    error?: string
+    data_collection_successful?: boolean
+    failure_stage?: string
   }
 }
 
@@ -283,6 +300,8 @@ export default function Dashboard() {
   const [selectedMember, setSelectedMember] = useState<TeamMember | null>(null)
   const [timeRange, setTimeRange] = useState("30")
   const [chartType, setChartType] = useState("daily")
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
+  const [analysisToDelete, setAnalysisToDelete] = useState<AnalysisResult | null>(null)
   
   const router = useRouter()
   const { toast } = useToast()
@@ -297,6 +316,7 @@ export default function Dashboard() {
       const authToken = localStorage.getItem('auth_token')
       if (!authToken) return
 
+      console.log('Loading previous analyses...')
       const response = await fetch(`${API_BASE}/analyses`, {
         headers: {
           'Authorization': `Bearer ${authToken}`
@@ -305,10 +325,89 @@ export default function Dashboard() {
 
       if (response.ok) {
         const data = await response.json()
+        console.log('Loaded analyses:', data.analyses?.length || 0, 'analyses')
         setPreviousAnalyses(data.analyses || [])
+      } else {
+        console.error('Failed to load analyses, status:', response.status)
       }
     } catch (error) {
       console.error('Failed to load previous analyses:', error)
+    }
+  }
+
+  const openDeleteDialog = (analysis: AnalysisResult, event: React.MouseEvent) => {
+    event.stopPropagation() // Prevent triggering the analysis selection
+    setAnalysisToDelete(analysis)
+    setDeleteDialogOpen(true)
+  }
+
+  const confirmDeleteAnalysis = async () => {
+    if (!analysisToDelete) return
+
+    try {
+      const authToken = localStorage.getItem('auth_token')
+      if (!authToken) return
+
+      console.log('Deleting analysis:', analysisToDelete.id)
+      
+      const response = await fetch(`${API_BASE}/analyses/${analysisToDelete.id}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${authToken}`
+        }
+      })
+
+      console.log('Delete response status:', response.status)
+
+      if (response.ok) {
+        console.log('Delete successful, updating local state...')
+        console.log('Current analyses before delete:', previousAnalyses.map(a => ({id: a.id, integration_id: a.integration_id})))
+        console.log('Deleting analysis with ID:', analysisToDelete.id, 'type:', typeof analysisToDelete.id)
+        
+        // Immediately remove from local state - be more explicit about ID matching
+        setPreviousAnalyses(prev => {
+          const filtered = prev.filter(a => {
+            const match = a.id === analysisToDelete.id || String(a.id) === String(analysisToDelete.id)
+            console.log(`Comparing ${a.id} (${typeof a.id}) with ${analysisToDelete.id} (${typeof analysisToDelete.id}): ${match ? 'REMOVE' : 'KEEP'}`)
+            return !match
+          })
+          console.log('Filtered analyses:', filtered.map(a => ({id: a.id, integration_id: a.integration_id})))
+          return filtered
+        })
+        
+        // If the deleted analysis was currently selected, clear it
+        if (currentAnalysis?.id === analysisToDelete.id) {
+          console.log('Clearing currently selected analysis')
+          setCurrentAnalysis(null)
+        }
+        
+        toast({
+          title: "Analysis deleted",
+          description: "The analysis has been successfully removed.",
+        })
+        
+        // Close dialog and reset state
+        setDeleteDialogOpen(false)
+        setAnalysisToDelete(null)
+        
+        // Also reload from server to ensure consistency
+        console.log('Reloading analyses list from server...')
+        setTimeout(() => loadPreviousAnalyses(), 500)
+        
+      } else {
+        const errorData = await response.json()
+        console.error('Delete failed:', errorData)
+        throw new Error(errorData.detail || 'Failed to delete analysis')
+      }
+    } catch (error) {
+      console.error('Delete error:', error)
+      toast({
+        title: "Delete failed",
+        description: error instanceof Error ? error.message : "Failed to delete analysis",
+        variant: "destructive",
+      })
+      setDeleteDialogOpen(false)
+      setAnalysisToDelete(null)
     }
   }
 
@@ -353,11 +452,14 @@ export default function Dashboard() {
   }
 
   const analysisStages = [
-    { key: "loading", label: "Loading data", duration: 1000 },
-    { key: "fetching", label: "Fetching incidents", duration: 1500 },
-    { key: "calculating", label: "Calculating metrics", duration: 2000 },
-    { key: "preparing", label: "Preparing insights", duration: 1000 },
-    { key: "complete", label: "Complete", duration: 500 },
+    { key: "loading", label: "Initializing Analysis", detail: "Setting up analysis parameters", duration: 800 },
+    { key: "connecting", label: "Connecting to Rootly", detail: "Validating API credentials", duration: 1000 },
+    { key: "fetching_users", label: "Fetching Team Members", detail: "Loading user profiles", duration: 1200 },
+    { key: "fetching", label: "Collecting Incident Data", detail: "Gathering incident history", duration: 1800 },
+    { key: "calculating", label: "Processing Patterns", detail: "Analyzing response times and workload", duration: 2000 },
+    { key: "analyzing", label: "Calculating Metrics", detail: "Computing burnout scores", duration: 1500 },
+    { key: "preparing", label: "Generating Insights", detail: "Creating recommendations", duration: 1000 },
+    { key: "complete", label: "Analysis Complete", detail: "Preparing results", duration: 300 },
   ]
 
   const [showTimeRangeDialog, setShowTimeRangeDialog] = useState(false)
@@ -456,11 +558,23 @@ export default function Dashboard() {
               return
             } else if (analysisData.status === 'failed') {
               setAnalysisRunning(false)
-              toast({
-                title: "Analysis failed",
-                description: analysisData.error_message || "The analysis could not be completed. Please try again.",
-                variant: "destructive",
-              })
+              
+              // Check if we have partial data to display
+              if (analysisData.analysis_data?.partial_data) {
+                setCurrentAnalysis(analysisData)
+                toast({
+                  title: "Analysis completed with data",
+                  description: "Analysis processing failed, but raw data was collected successfully.",
+                  variant: "default",
+                })
+                await loadPreviousAnalyses()
+              } else {
+                toast({
+                  title: "Analysis failed",
+                  description: analysisData.error_message || "The analysis could not be completed. Please try again.",
+                  variant: "destructive",
+                })
+              }
               return
             }
           }
@@ -512,8 +626,6 @@ export default function Dashboard() {
 
   const getRiskColor = (riskLevel: string) => {
     switch (riskLevel) {
-      case "critical":
-        return "text-red-800 bg-red-100 border-red-300"
       case "high":
         return "text-red-600 bg-red-50 border-red-200"
       case "medium":
@@ -604,19 +716,23 @@ export default function Dashboard() {
     { date: "Week 1", score: currentAnalysis.analysis_data.team_health.overall_score * 10 },
   ] : []
   
-  const memberBarData = currentAnalysis?.analysis_data?.individual_analysis?.map((member) => ({
-    name: member.name.split(" ")[0],
+  const memberBarData = currentAnalysis?.analysis_data?.team_analysis?.members?.map((member) => ({
+    name: member.user_name.split(" ")[0],
+    fullName: member.user_name,
     score: member.burnout_score * 10, // Convert 0-10 scale to 0-100 for display
-    fill: member.risk_level === "high" || member.risk_level === "critical" ? "#ef4444" : 
-          member.risk_level === "medium" ? "#f59e0b" : "#10b981",
+    riskLevel: member.risk_level,
+    fill: member.risk_level === "high" ? "#dc2626" :      // Red for high
+          member.risk_level === "medium" ? "#f59e0b" :    // Amber for medium
+          "#10b981",                                       // Green for low
   })) || []
   
-  const burnoutFactors = currentAnalysis?.analysis_data?.individual_analysis ? [
-    { factor: "Workload", value: currentAnalysis.analysis_data.individual_analysis.reduce((avg, m) => avg + m.factors.workload, 0) / currentAnalysis.analysis_data.individual_analysis.length * 10 },
-    { factor: "After Hours", value: currentAnalysis.analysis_data.individual_analysis.reduce((avg, m) => avg + m.factors.after_hours, 0) / currentAnalysis.analysis_data.individual_analysis.length * 10 },
-    { factor: "Weekend Work", value: currentAnalysis.analysis_data.individual_analysis.reduce((avg, m) => avg + m.factors.weekend_work, 0) / currentAnalysis.analysis_data.individual_analysis.length * 10 },
-    { factor: "Incident Load", value: currentAnalysis.analysis_data.individual_analysis.reduce((avg, m) => avg + m.factors.incident_load, 0) / currentAnalysis.analysis_data.individual_analysis.length * 10 },
-    { factor: "Response Time", value: currentAnalysis.analysis_data.individual_analysis.reduce((avg, m) => avg + m.factors.response_time, 0) / currentAnalysis.analysis_data.individual_analysis.length * 10 },
+  const members = currentAnalysis?.analysis_data?.team_analysis?.members || []
+  const burnoutFactors = members.length > 0 ? [
+    { factor: "Workload", value: members.reduce((avg, m) => avg + (m.factors?.workload || 0), 0) / members.length * 10 },
+    { factor: "After Hours", value: members.reduce((avg, m) => avg + (m.factors?.after_hours || 0), 0) / members.length * 10 },
+    { factor: "Weekend Work", value: members.reduce((avg, m) => avg + (m.factors?.weekend_work || 0), 0) / members.length * 10 },
+    { factor: "Incident Load", value: members.reduce((avg, m) => avg + (m.factors?.incident_load || 0), 0) / members.length * 10 },
+    { factor: "Response Time", value: members.reduce((avg, m) => avg + (m.factors?.response_time || 0), 0) / members.length * 10 },
   ] : []
 
   return (
@@ -689,29 +805,56 @@ export default function Dashboard() {
                 const analysisDate = new Date(analysis.created_at)
                 const timeStr = analysisDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
                 const dateStr = analysisDate.toLocaleDateString([], { month: 'short', day: 'numeric' })
-                const teamName = integrations.find(i => i.id === analysis.integration_id)?.name || 'Unknown Team'
+                
+                // Debug integration matching
+                const matchingIntegration = integrations.find(i => i.id === Number(analysis.integration_id)) || 
+                                          integrations.find(i => String(i.id) === String(analysis.integration_id))
+                
+                if (!matchingIntegration) {
+                  console.log('No matching integration found for analysis:', {
+                    analysisId: analysis.id,
+                    integrationId: analysis.integration_id,
+                    integrationIdType: typeof analysis.integration_id,
+                    availableIntegrations: integrations.map(i => ({id: i.id, name: i.name, type: typeof i.id}))
+                  })
+                }
+                
+                const teamName = matchingIntegration?.name || 'Unknown Team'
+                const isSelected = currentAnalysis?.id === analysis.id
                 return (
-                  <Button 
-                    key={analysis.id}
-                    variant="ghost" 
-                    className="w-full justify-start text-gray-300 hover:text-white hover:bg-gray-800 py-2 h-auto"
-                    onClick={() => setCurrentAnalysis(analysis)}
-                  >
-                    {sidebarCollapsed ? (
-                      <Clock className="w-4 h-4" />
-                    ) : (
-                      <div className="flex flex-col items-start w-full text-xs">
-                        <div className="flex justify-between items-center w-full mb-1">
-                          <span className="font-medium">{teamName}</span>
-                          <span className="text-gray-500">{analysis.time_range || 30}d</span>
+                  <div key={analysis.id} className={`relative group ${isSelected ? 'bg-gray-800' : ''} rounded`}>
+                    <Button 
+                      variant="ghost" 
+                      className={`w-full justify-start text-gray-300 hover:text-white hover:bg-gray-800 py-2 h-auto ${isSelected ? 'bg-gray-800 text-white' : ''}`}
+                      onClick={() => setCurrentAnalysis(analysis)}
+                    >
+                      {sidebarCollapsed ? (
+                        <Clock className="w-4 h-4" />
+                      ) : (
+                        <div className="flex flex-col items-start w-full text-xs pr-8">
+                          <div className="flex justify-between items-center w-full mb-1">
+                            <span className="font-medium">{teamName}</span>
+                            <span className="text-gray-500">{analysis.time_range || 30}d</span>
+                          </div>
+                          <div className="flex justify-between items-center w-full text-gray-400">
+                            <span>{dateStr}</span>
+                            <span>{timeStr}</span>
+                          </div>
                         </div>
-                        <div className="flex justify-between items-center w-full text-gray-400">
-                          <span>{dateStr}</span>
-                          <span>{timeStr}</span>
-                        </div>
-                      </div>
+                      )}
+                    </Button>
+                    {!sidebarCollapsed && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity p-1 h-6 w-6 text-gray-400 hover:text-red-400 hover:bg-red-900/20"
+                        onClick={(e) => openDeleteDialog(analysis, e)}
+                        title="Delete analysis"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </Button>
                     )}
-                  </Button>
+                  </div>
                 )
               })}
             </div>
@@ -742,21 +885,87 @@ export default function Dashboard() {
                 {selectedIntegrationData ? `${selectedIntegrationData.name} - ${selectedIntegrationData.organization_name}` : 'Select a team to analyze'}
               </p>
             </div>
+            {/* Export Dropdown */}
+            {currentAnalysis && currentAnalysis.analysis_data && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button 
+                    variant="outline" 
+                    className="flex items-center space-x-2 border-gray-300 hover:bg-gray-50"
+                    title="Export analysis data"
+                  >
+                    <Download className="w-4 h-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuItem onClick={exportAsJSON} className="flex items-center space-x-2">
+                    <Download className="w-4 h-4" />
+                    <div className="flex flex-col">
+                      <span className="font-medium">Export as JSON</span>
+                      <span className="text-xs text-gray-500">Complete analysis data</span>
+                    </div>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem disabled className="flex items-center space-x-2 opacity-50">
+                    <Download className="w-4 h-4" />
+                    <div className="flex flex-col">
+                      <span className="font-medium">Export as CSV</span>
+                      <span className="text-xs text-gray-500">Team member scores</span>
+                    </div>
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem disabled className="flex items-center space-x-2 opacity-50">
+                    <FileText className="w-4 h-4" />
+                    <div className="flex flex-col">
+                      <span className="font-medium">Generate PDF Report</span>
+                      <span className="text-xs text-gray-500">Executive summary</span>
+                    </div>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           </div>
 
           {/* Analysis Running State */}
           {analysisRunning && (
-            <Card className="mb-6">
+            <Card className="mb-6 bg-gradient-to-b from-purple-50 to-white border-purple-200 shadow-lg">
               <CardContent className="p-8 text-center">
-                <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Activity className="w-8 h-8 text-purple-600 animate-pulse" />
+                <div className="w-20 h-20 bg-gradient-to-r from-purple-100 to-purple-200 rounded-full flex items-center justify-center mx-auto mb-6 animate-pulse shadow-md">
+                  <Activity className="w-10 h-10 text-purple-600 animate-spin" />
                 </div>
-                <h3 className="text-lg font-semibold mb-2">
+                <h3 className="text-xl font-bold mb-2 text-purple-900">
                   {analysisStages.find((s) => s.key === analysisStage)?.label}
                 </h3>
-                <Progress value={analysisProgress} className="w-full max-w-md mx-auto mb-4" />
-                <p className="text-sm text-gray-600 mb-4">{Math.round(analysisProgress)}% complete</p>
-                <Button variant="outline" onClick={() => setAnalysisRunning(false)}>
+                <p className="text-sm text-purple-600 mb-6 font-medium">
+                  {analysisStages.find((s) => s.key === analysisStage)?.detail}
+                </p>
+                
+                {/* Enhanced Progress Bar */}
+                <div className="w-full max-w-md mx-auto mb-6">
+                  <div className="relative">
+                    <div className="w-full h-4 bg-purple-100 rounded-full border border-purple-200 overflow-hidden">
+                      <div 
+                        className="h-full bg-gradient-to-r from-purple-400 via-purple-500 to-purple-600 rounded-full transition-all duration-1000 ease-out relative"
+                        style={{ width: `${analysisProgress}%` }}
+                      >
+                        <div className="absolute inset-0 bg-white opacity-30 animate-pulse rounded-full"></div>
+                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-20 animate-ping rounded-full"></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="flex items-center justify-center space-x-4 mb-6">
+                  <div className="flex items-center space-x-1">
+                    <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce"></div>
+                    <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
+                    <div className="w-2 h-2 bg-purple-300 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                  </div>
+                  <p className="text-lg font-semibold text-purple-800">
+                    {Math.round(analysisProgress)}% complete
+                  </p>
+                </div>
+                
+                <Button variant="outline" onClick={() => setAnalysisRunning(false)} className="border-purple-300 hover:bg-purple-50 text-purple-700">
                   <X className="w-4 h-4 mr-2" />
                   Cancel Analysis
                 </Button>
@@ -764,8 +973,40 @@ export default function Dashboard() {
             </Card>
           )}
 
+          {/* Failed Analysis Without Data */}
+          {!analysisRunning && currentAnalysis && currentAnalysis.status === 'failed' && 
+           !currentAnalysis.analysis_data?.partial_data && !currentAnalysis.analysis_data?.team_health && (
+            <Card className="mb-6 border-red-200 bg-red-50">
+              <CardHeader>
+                <CardTitle className="flex items-center space-x-2 text-red-800">
+                  <AlertTriangle className="w-5 h-5" />
+                  <span>Analysis Failed</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-red-700 mb-4">
+                  This analysis failed and no data was collected.
+                </p>
+                <div className="p-3 bg-red-100 rounded-lg">
+                  <p className="text-xs text-red-600">
+                    <strong>Error:</strong> {currentAnalysis.error_message || 'Unknown error occurred'}
+                  </p>
+                </div>
+                <div className="mt-4">
+                  <Button
+                    onClick={() => setShowTimeRangeDialog(true)}
+                    className="bg-red-600 hover:bg-red-700 text-white"
+                  >
+                    <Play className="w-4 h-4 mr-2" />
+                    Try Again
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Analysis Complete State */}
-          {!analysisRunning && currentAnalysis && (
+          {!analysisRunning && currentAnalysis && (currentAnalysis.analysis_data?.team_health || currentAnalysis.analysis_data?.partial_data) && (
             <>
               {/* Overview Cards */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
@@ -785,7 +1026,9 @@ export default function Dashboard() {
                         </p>
                       </div>
                     ) : (
-                      <div className="text-gray-500">Analysis in progress...</div>
+                      <div className="text-gray-500">
+                        {currentAnalysis?.status === 'failed' ? 'Analysis failed' : 'Analysis in progress...'}
+                      </div>
                     )}
                   </CardContent>
                 </Card>
@@ -798,13 +1041,15 @@ export default function Dashboard() {
                     {currentAnalysis?.analysis_data?.team_health ? (
                       <div>
                         <div className="flex items-center space-x-2">
-                          <div className="text-2xl font-bold text-red-600">{currentAnalysis.analysis_data.team_health.risk_distribution.high + currentAnalysis.analysis_data.team_health.risk_distribution.critical}</div>
+                          <div className="text-2xl font-bold text-red-600">{currentAnalysis.analysis_data.team_health.risk_distribution.high}</div>
                           <AlertTriangle className="w-5 h-5 text-red-500" />
                         </div>
-                        <p className="text-xs text-gray-600 mt-1">Out of {currentAnalysis.analysis_data.individual_analysis?.length || 0} members</p>
+                        <p className="text-xs text-gray-600 mt-1">Out of {currentAnalysis.analysis_data.team_analysis?.members?.length || 0} members</p>
                       </div>
                     ) : (
-                      <div className="text-gray-500">Analysis in progress...</div>
+                      <div className="text-gray-500">
+                        {currentAnalysis?.status === 'failed' ? 'Analysis failed' : 'Analysis in progress...'}
+                      </div>
                     )}
                   </CardContent>
                 </Card>
@@ -829,6 +1074,120 @@ export default function Dashboard() {
                 </Card>
               </div>
 
+              {/* Partial Data Warning */}
+              {currentAnalysis?.analysis_data?.error && currentAnalysis?.analysis_data?.partial_data && (
+                <Card className="mb-6 border-yellow-200 bg-yellow-50">
+                  <CardHeader>
+                    <CardTitle className="flex items-center space-x-2 text-yellow-800">
+                      <AlertTriangle className="w-5 h-5" />
+                      <span>Partial Data Available</span>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-yellow-700 mb-4">
+                      Analysis processing failed, but we successfully collected raw data from Rootly:
+                    </p>
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <span className="font-medium">Users collected:</span>
+                        <p className="text-lg font-bold text-yellow-800">
+                          {currentAnalysis.analysis_data.partial_data.users?.length || 0}
+                        </p>
+                      </div>
+                      <div>
+                        <span className="font-medium">Incidents collected:</span>
+                        <p className="text-lg font-bold text-yellow-800">
+                          {currentAnalysis.analysis_data.partial_data.incidents?.length || 0}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-4 p-3 bg-yellow-100 rounded-lg">
+                      <p className="text-xs text-yellow-600">
+                        <strong>Error:</strong> {currentAnalysis.analysis_data.error}
+                      </p>
+                    </div>
+                    <div className="mt-4 flex space-x-3">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          const partialData = {
+                            analysis_id: currentAnalysis.id,
+                            export_date: new Date().toISOString(),
+                            data_collection_successful: currentAnalysis.analysis_data.data_collection_successful,
+                            failure_stage: currentAnalysis.analysis_data.failure_stage,
+                            error: currentAnalysis.analysis_data.error,
+                            users: currentAnalysis.analysis_data.partial_data.users,
+                            incidents: currentAnalysis.analysis_data.partial_data.incidents,
+                            metadata: currentAnalysis.analysis_data.partial_data.metadata
+                          }
+                          
+                          const blob = new Blob([JSON.stringify(partialData, null, 2)], { type: 'application/json' })
+                          const url = URL.createObjectURL(blob)
+                          const a = document.createElement('a')
+                          a.href = url
+                          a.download = `rootly-partial-data-${currentAnalysis.id}.json`
+                          document.body.appendChild(a)
+                          a.click()
+                          document.body.removeChild(a)
+                          URL.revokeObjectURL(url)
+                        }}
+                        className="border-yellow-300 text-yellow-700 hover:bg-yellow-100"
+                      >
+                        <Download className="w-4 h-4 mr-2" />
+                        Export Raw Data
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Team Member Scores - Full Width */}
+              <Card className="mb-6">
+                <CardHeader>
+                  <CardTitle>Team Member Scores</CardTitle>
+                  <CardDescription>Burnout risk levels across team members</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="h-[300px]">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={memberBarData}>
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="name" />
+                        <YAxis domain={[0, 100]} />
+                        <Tooltip 
+                          formatter={(value, name, props) => {
+                            const data = props.payload;
+                            return [
+                              `${value}%`, 
+                              `Burnout Score (${data.riskLevel.charAt(0).toUpperCase() + data.riskLevel.slice(1)} Risk)`
+                            ];
+                          }}
+                          labelFormatter={(label, payload) => {
+                            const data = payload?.[0]?.payload;
+                            return data ? `${data.fullName}` : label;
+                          }}
+                          contentStyle={{
+                            backgroundColor: 'white',
+                            border: '1px solid #e5e7eb',
+                            borderRadius: '8px',
+                            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
+                          }}
+                        />
+                        <Bar 
+                          dataKey="score" 
+                          radius={[4, 4, 0, 0]}
+                        >
+                          {memberBarData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.fill} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </CardContent>
+              </Card>
+
               {/* Charts Section */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
                 {/* Trend Chart */}
@@ -848,7 +1207,7 @@ export default function Dashboard() {
                     </div>
                   </CardHeader>
                   <CardContent>
-                    <div className="h-[200px]">
+                    <div className="h-[250px]">
                       <ResponsiveContainer width="100%" height="100%">
                         <LineChart data={chartData}>
                           <CartesianGrid strokeDasharray="3 3" />
@@ -862,63 +1221,36 @@ export default function Dashboard() {
                   </CardContent>
                 </Card>
 
-                {/* Member Scores */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Team Member Scores</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="h-[200px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={memberBarData}>
-                          <CartesianGrid strokeDasharray="3 3" />
-                          <XAxis dataKey="name" />
-                          <YAxis domain={[0, 100]} />
-                          <Tooltip />
-                          <Bar dataKey="score" radius={[4, 4, 0, 0]} />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                  </CardContent>
-                </Card>
-
                 {/* Radar Chart */}
                 <Card>
                   <CardHeader>
                     <CardTitle>Burnout Factors</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="h-[200px]">
+                    <div className="h-[250px] p-4">
                       <ResponsiveContainer width="100%" height="100%">
-                        <RadarChart data={burnoutFactors}>
+                        <RadarChart data={burnoutFactors} margin={{ top: 20, right: 30, bottom: 20, left: 30 }}>
                           <PolarGrid />
-                          <PolarAngleAxis dataKey="factor" />
-                          <PolarRadiusAxis domain={[0, 100]} />
-                          <Radar dataKey="value" stroke="#8B5CF6" fill="#8B5CF6" fillOpacity={0.3} />
+                          <PolarAngleAxis 
+                            dataKey="factor" 
+                            tick={{ fontSize: 12, fill: '#374151' }}
+                            className="text-xs"
+                          />
+                          <PolarRadiusAxis 
+                            domain={[0, 100]} 
+                            tick={{ fontSize: 10, fill: '#6B7280' }}
+                            tickCount={4}
+                          />
+                          <Radar 
+                            dataKey="value" 
+                            stroke="#8B5CF6" 
+                            fill="#8B5CF6" 
+                            fillOpacity={0.3}
+                            strokeWidth={2}
+                          />
                         </RadarChart>
                       </ResponsiveContainer>
                     </div>
-                  </CardContent>
-                </Card>
-
-                {/* Export Options */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Export Analysis</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-2">
-                    <Button variant="outline" className="w-full justify-start" onClick={exportAsJSON}>
-                      <Download className="w-4 h-4 mr-2" />
-                      Export as JSON
-                    </Button>
-                    <Button variant="outline" className="w-full justify-start" disabled>
-                      <Download className="w-4 h-4 mr-2" />
-                      Export as CSV
-                    </Button>
-                    <Button variant="outline" className="w-full justify-start" disabled>
-                      <Download className="w-4 h-4 mr-2" />
-                      Generate PDF Report
-                    </Button>
                   </CardContent>
                 </Card>
               </div>
@@ -931,19 +1263,19 @@ export default function Dashboard() {
                 </CardHeader>
                 <CardContent>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {currentAnalysis?.analysis_data?.individual_analysis?.map((member) => (
+                    {currentAnalysis?.analysis_data?.team_analysis?.members?.map((member) => (
                       <Card
                         key={member.user_id}
                         className="cursor-pointer hover:shadow-md transition-shadow"
                         onClick={() => setSelectedMember({
                           id: member.user_id,
-                          name: member.name,
-                          email: member.email,
+                          name: member.user_name,
+                          email: member.user_email,
                           burnoutScore: member.burnout_score * 10,
                           riskLevel: member.risk_level as 'high' | 'medium' | 'low',
                           trend: 'stable' as const,
                           incidentsHandled: member.incident_count,
-                          avgResponseTime: `${Math.round(member.avg_response_time_hours * 60)}m`,
+                          avgResponseTime: `${Math.round(member.metrics.avg_response_time_minutes)}m`,
                           factors: {
                             workload: member.factors.workload * 10,
                             afterHours: member.factors.after_hours * 10,
@@ -958,15 +1290,15 @@ export default function Dashboard() {
                             <div className="flex items-center space-x-3">
                               <Avatar>
                                 <AvatarFallback>
-                                  {member.name
+                                  {member.user_name
                                     .split(" ")
                                     .map((n) => n[0])
                                     .join("")}
                                 </AvatarFallback>
                               </Avatar>
                               <div>
-                                <h3 className="font-medium">{member.name}</h3>
-                                <p className="text-sm text-gray-500">{member.email}</p>
+                                <h3 className="font-medium">{member.user_name}</h3>
+                                <p className="text-sm text-gray-500">{member.user_email}</p>
                               </div>
                             </div>
                             <div className="flex items-center space-x-2">
@@ -981,7 +1313,7 @@ export default function Dashboard() {
                             <Progress value={member.burnout_score * 10} className="h-2" />
                             <div className="flex justify-between text-xs text-gray-500">
                               <span>{member.incident_count} incidents</span>
-                              <span>{Math.round(member.avg_response_time_hours * 60)}m avg response</span>
+                              <span>{Math.round(member.metrics.avg_response_time_minutes)}m avg response</span>
                             </div>
                           </div>
                         </CardContent>
@@ -1122,6 +1454,69 @@ export default function Dashboard() {
               )}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center space-x-2">
+              <div className="w-8 h-8 bg-red-100 rounded-full flex items-center justify-center">
+                <AlertTriangle className="w-4 h-4 text-red-600" />
+              </div>
+              <span>Delete Analysis</span>
+            </DialogTitle>
+            <DialogDescription className="text-gray-600 mt-2">
+              Are you sure you want to delete this analysis? This action cannot be undone and will permanently remove all data associated with this analysis.
+            </DialogDescription>
+          </DialogHeader>
+          
+          {analysisToDelete && (
+            <div className="my-4 p-3 bg-gray-50 rounded-lg border">
+              <div className="flex items-center justify-between text-sm">
+                <div className="flex flex-col">
+                  <span className="font-medium text-gray-900">
+                    {integrations.find(i => i.id === Number(analysisToDelete.integration_id))?.name || 
+                     integrations.find(i => String(i.id) === String(analysisToDelete.integration_id))?.name || 
+                     'Unknown Team'}
+                  </span>
+                  <span className="text-gray-500">
+                    {new Date(analysisToDelete.created_at).toLocaleDateString([], { 
+                      month: 'short', 
+                      day: 'numeric', 
+                      year: 'numeric',
+                      hour: 'numeric',
+                      minute: '2-digit'
+                    })}
+                  </span>
+                </div>
+                <span className="text-gray-400 text-xs">
+                  {analysisToDelete.time_range || 30} days
+                </span>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="flex space-x-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setDeleteDialogOpen(false)
+                setAnalysisToDelete(null)
+              }}
+              className="flex-1"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={confirmDeleteAnalysis}
+              className="flex-1 bg-red-600 hover:bg-red-700"
+            >
+              Delete Analysis
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

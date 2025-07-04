@@ -1,6 +1,7 @@
 """
 Burnout analysis API endpoints.
 """
+import logging
 from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
@@ -10,6 +11,8 @@ from sqlalchemy.orm import Session
 from ...models import get_db, User, Analysis, RootlyIntegration
 from ...auth.dependencies import get_current_active_user
 from ...services.burnout_analyzer import BurnoutAnalyzerService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -43,6 +46,8 @@ async def run_burnout_analysis(
     db: Session = Depends(get_db)
 ):
     """Run a new burnout analysis for a specific integration and time range."""
+    print(f"ENDPOINT_DEBUG: Entered run_burnout_analysis for integration {request.integration_id}")
+    logger.info(f"ENDPOINT_DEBUG: Entered run_burnout_analysis for integration {request.integration_id}")
     # Verify the integration belongs to the current user
     integration = db.query(RootlyIntegration).filter(
         RootlyIntegration.id == request.integration_id,
@@ -75,14 +80,20 @@ async def run_burnout_analysis(
     db.commit()
     
     # Start analysis in background
-    background_tasks.add_task(
-        run_analysis_task,
-        analysis_id=analysis.id,
-        integration_id=integration.id,
-        api_token=integration.token,
-        time_range=request.time_range,
-        include_weekends=request.include_weekends
-    )
+    logger.info(f"ENDPOINT: About to add background task for analysis {analysis.id}")
+    try:
+        background_tasks.add_task(
+            run_analysis_task,
+            analysis_id=analysis.id,
+            integration_id=integration.id,
+            api_token=integration.token,
+            time_range=request.time_range,
+            include_weekends=request.include_weekends
+        )
+        logger.info(f"ENDPOINT: Successfully added background task for analysis {analysis.id}")
+    except Exception as e:
+        logger.error(f"ENDPOINT: Failed to add background task for analysis {analysis.id}: {e}")
+        raise
     
     return AnalysisResponse(
         id=analysis.id,
@@ -178,6 +189,33 @@ async def get_analysis(
     )
 
 
+@router.delete("/{analysis_id}")
+async def delete_analysis(
+    analysis_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Delete a specific analysis."""
+    analysis = db.query(Analysis).filter(
+        Analysis.id == analysis_id,
+        Analysis.user_id == current_user.id
+    ).first()
+    
+    if not analysis:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Analysis not found"
+        )
+    
+    # Delete the analysis
+    db.delete(analysis)
+    db.commit()
+    
+    logger.info(f"Analysis {analysis_id} deleted by user {current_user.id}")
+    
+    return {"message": "Analysis deleted successfully"}
+
+
 async def run_analysis_task(
     analysis_id: int,
     integration_id: int,
@@ -188,6 +226,10 @@ async def run_analysis_task(
     """Background task to run the actual burnout analysis."""
     import asyncio
     from datetime import datetime
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    logger.info(f"BACKGROUND_TASK: Starting analysis {analysis_id} with timeout mechanism")
     
     db = next(get_db())
     
@@ -195,15 +237,19 @@ async def run_analysis_task(
         # Update status to running
         analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
         if not analysis:
+            logger.info(f"BACKGROUND_TASK: Analysis {analysis_id} not found in database")
             return  # Analysis doesn't exist
             
+        logger.info(f"BACKGROUND_TASK: Setting analysis {analysis_id} to running status")
         analysis.status = "running"
         db.commit()
         
         # Initialize analyzer service
+        logger.info(f"BACKGROUND_TASK: Initializing BurnoutAnalyzerService for analysis {analysis_id}")
         analyzer_service = BurnoutAnalyzerService(api_token)
         
         # Run the analysis with timeout (5 minutes max)
+        logger.info(f"BACKGROUND_TASK: Starting burnout analysis with 5-minute timeout for analysis {analysis_id}")
         try:
             results = await asyncio.wait_for(
                 analyzer_service.analyze_burnout(
@@ -212,6 +258,7 @@ async def run_analysis_task(
                 ),
                 timeout=300.0  # 5 minutes
             )
+            logger.info(f"BACKGROUND_TASK: Analysis {analysis_id} completed successfully")
             
             # Update analysis with results
             analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
@@ -231,13 +278,41 @@ async def run_analysis_task(
                 db.commit()
                 
         except Exception as analysis_error:
-            # Handle analysis-specific errors
+            # Handle analysis-specific errors - try to save partial data
+            logger.error(f"BACKGROUND_TASK: Analysis {analysis_id} failed: {analysis_error}")
+            
             analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
             if analysis:
-                analysis.status = "failed"
-                analysis.error_message = f"Analysis failed: {str(analysis_error)}"
-                analysis.completed_at = datetime.now()
-                db.commit()
+                # Try to collect raw data even if analysis failed
+                try:
+                    logger.info(f"BACKGROUND_TASK: Attempting to save raw data for failed analysis {analysis_id}")
+                    raw_data = await analyzer_service.client.collect_analysis_data(days_back=time_range)
+                    
+                    # Save partial results with raw data
+                    partial_results = {
+                        "error": f"Analysis failed: {str(analysis_error)}",
+                        "partial_data": {
+                            "users": raw_data.get("users", []) if raw_data else [],
+                            "incidents": raw_data.get("incidents", []) if raw_data else [],
+                            "metadata": raw_data.get("collection_metadata", {}) if raw_data else {}
+                        },
+                        "data_collection_successful": bool(raw_data),
+                        "failure_stage": "analysis_processing"
+                    }
+                    
+                    analysis.status = "failed"
+                    analysis.error_message = f"Analysis failed: {str(analysis_error)}"
+                    analysis.results = partial_results
+                    analysis.completed_at = datetime.now()
+                    db.commit()
+                    logger.info(f"BACKGROUND_TASK: Saved partial data for failed analysis {analysis_id}")
+                    
+                except Exception as data_error:
+                    logger.error(f"BACKGROUND_TASK: Could not save partial data for analysis {analysis_id}: {data_error}")
+                    analysis.status = "failed"
+                    analysis.error_message = f"Analysis failed: {str(analysis_error)}"
+                    analysis.completed_at = datetime.now()
+                    db.commit()
         
     except Exception as e:
         # Handle any other errors (DB, etc.)

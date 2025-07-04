@@ -23,8 +23,70 @@ class RootlyAPIClient:
             "Accept": "application/vnd.api+json"
         }
     
+    async def check_permissions(self) -> Dict[str, Any]:
+        """Check permissions for specific API endpoints."""
+        permissions = {
+            "users": {"access": False, "error": None},
+            "incidents": {"access": False, "error": None}
+        }
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                # Test users endpoint
+                try:
+                    response = await client.get(
+                        f"{self.base_url}/v1/users",
+                        headers=self.headers,
+                        params={"page[size]": 1},
+                        timeout=10.0
+                    )
+                    
+                    if response.status_code == 200:
+                        permissions["users"]["access"] = True
+                    elif response.status_code == 401:
+                        permissions["users"]["error"] = "Unauthorized - check API token"
+                    elif response.status_code == 403:
+                        permissions["users"]["error"] = "Forbidden - insufficient permissions"
+                    elif response.status_code == 404:
+                        permissions["users"]["error"] = "Endpoint not found"
+                    else:
+                        permissions["users"]["error"] = f"HTTP {response.status_code}"
+                        
+                except Exception as e:
+                    permissions["users"]["error"] = f"Connection error: {str(e)}"
+                
+                # Test incidents endpoint
+                try:
+                    response = await client.get(
+                        f"{self.base_url}/v1/incidents",
+                        headers=self.headers,
+                        params={"page[size]": 1},
+                        timeout=10.0
+                    )
+                    
+                    if response.status_code == 200:
+                        permissions["incidents"]["access"] = True
+                    elif response.status_code == 401:
+                        permissions["incidents"]["error"] = "Unauthorized - check API token"
+                    elif response.status_code == 403:
+                        permissions["incidents"]["error"] = "Forbidden - insufficient permissions"
+                    elif response.status_code == 404:
+                        permissions["incidents"]["error"] = "Endpoint not found"
+                    else:
+                        permissions["incidents"]["error"] = f"HTTP {response.status_code}"
+                        
+                except Exception as e:
+                    permissions["incidents"]["error"] = f"Connection error: {str(e)}"
+                
+        except Exception as e:
+            logger.error(f"Error checking permissions: {e}")
+            permissions["users"]["error"] = f"General error: {str(e)}"
+            permissions["incidents"]["error"] = f"General error: {str(e)}"
+            
+        return permissions
+
     async def test_connection(self) -> Dict[str, Any]:
-        """Test API connection and return basic account info."""
+        """Test API connection and return basic account info with permissions."""
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.get(
@@ -83,6 +145,10 @@ class RootlyAPIClient:
                     if organization_name:
                         account_info["organization_name"] = organization_name
                     
+                    # Check permissions for required endpoints
+                    permissions = await self.check_permissions()
+                    account_info["permissions"] = permissions
+                    
                     return {
                         "status": "success",
                         "message": "Connected successfully",
@@ -135,6 +201,8 @@ class RootlyAPIClient:
                         "page[size]": page_size
                     })
                     
+                    logger.info(f"Fetching users page {page} (page_size: {page_size})")
+                    
                     response = await client.get(
                         f"{self.base_url}/v1/users?{params_encoded}",
                         headers=self.headers,
@@ -157,13 +225,19 @@ class RootlyAPIClient:
                     users = data.get("data", [])
                     
                     if not users:
+                        logger.info(f"No more users found on page {page}")
                         break
                     
                     all_users.extend(users)
+                    logger.info(f"Fetched {len(users)} users from page {page}, total: {len(all_users)}")
                     
                     # Check if we have more pages
                     meta = data.get("meta", {})
-                    if page >= meta.get("total_pages", 1):
+                    total_pages = meta.get("total_pages", 1)
+                    logger.info(f"Page {page} of {total_pages}")
+                    
+                    if page >= total_pages:
+                        logger.info(f"Reached last page ({page}/{total_pages})")
                         break
                     
                     page += 1
@@ -292,9 +366,9 @@ class RootlyAPIClient:
             if connection_test["status"] != "success":
                 raise Exception(f"Connection test failed: {connection_test['message']}")
             
-            # Collect users and incidents in parallel
-            users_task = self.get_users(limit=200)
-            incidents_task = self.get_incidents(days_back=days_back, limit=1000)
+            # Collect users and incidents in parallel (reduced limits for faster processing)
+            users_task = self.get_users(limit=100)  # Reduced from 200 to 100
+            incidents_task = self.get_incidents(days_back=days_back, limit=500)  # Reduced from 1000 to 500
             
             users = await users_task
             incidents = await incidents_task
