@@ -1611,7 +1611,7 @@ export default function Dashboard() {
                           formatter={(value, name, props) => {
                             const data = props.payload;
                             return [
-                              `${Number(value).toFixed(1)}%`, 
+                              `${Number(value).toFixed(2)}%`, 
                               `Burnout Score (${data.riskLevel.charAt(0).toUpperCase() + data.riskLevel.slice(1)} Risk)`
                             ];
                           }}
@@ -1654,7 +1654,9 @@ export default function Dashboard() {
                           <CartesianGrid strokeDasharray="3 3" />
                           <XAxis dataKey="date" />
                           <YAxis domain={[0, 100]} />
-                          <Tooltip />
+                          <Tooltip 
+                            formatter={(value) => [`${Number(value).toFixed(2)}%`, 'Burnout Score']}
+                          />
                           <Line type="monotone" dataKey="score" stroke="#8B5CF6" strokeWidth={2} />
                         </LineChart>
                       </ResponsiveContainer>
@@ -1696,7 +1698,7 @@ export default function Dashboard() {
                                 return (
                                   <div className="bg-white p-3 border border-gray-200 rounded-lg shadow-lg">
                                     <p className="font-semibold text-gray-900">{label}</p>
-                                    <p className="text-purple-600">Score: {Math.round(data.value)}%</p>
+                                    <p className="text-purple-600">Score: {Number(data.value).toFixed(2)}%</p>
                                     <p className="text-sm text-gray-600 mt-1">{data.metrics}</p>
                                   </div>
                                 )
@@ -1727,17 +1729,17 @@ export default function Dashboard() {
                           id: member.user_id,
                           name: member.user_name,
                           email: member.user_email,
-                          burnoutScore: member.burnout_score * 10,
+                          burnoutScore: member.burnout_score * 10, // Convert 0-10 scale to 0-100 percentage
                           riskLevel: member.risk_level as 'high' | 'medium' | 'low',
                           trend: 'stable' as const,
                           incidentsHandled: member.incident_count,
                           avgResponseTime: `${Math.round(member.metrics.avg_response_time_minutes)}m`,
                           factors: {
-                            workload: member.factors.workload * 10,
-                            afterHours: member.factors.after_hours * 10,
-                            weekendWork: member.factors.weekend_work * 10,
-                            incidentLoad: member.factors.incident_load * 10,
-                            responseTime: member.factors.response_time * 10,
+                            workload: Math.round(member.factors.workload * 10 * 10) / 10,
+                            afterHours: Math.round(member.factors.after_hours * 10 * 10) / 10,
+                            weekendWork: Math.round(member.factors.weekend_work * 10 * 10) / 10,
+                            incidentLoad: Math.round(member.factors.incident_load * 10 * 10) / 10,
+                            responseTime: Math.round(member.factors.response_time * 10 * 10) / 10,
                           }
                         })}
                       >
@@ -1764,7 +1766,7 @@ export default function Dashboard() {
                           <div className="space-y-2">
                             <div className="flex justify-between text-sm">
                               <span>Burnout Score</span>
-                              <span className="font-medium">{Math.round(member.burnout_score * 10)}%</span>
+                              <span className="font-medium">{(member.burnout_score * 10).toFixed(1)}%</span>
                             </div>
                             <div className="relative h-2 w-full overflow-hidden rounded-full bg-gray-200">
                               <div 
@@ -1971,7 +1973,7 @@ export default function Dashboard() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <p className="text-sm text-gray-600">Burnout Score</p>
-                  <p className="text-2xl font-bold">{selectedMember.burnoutScore}%</p>
+                  <p className="text-2xl font-bold">{selectedMember.burnoutScore.toFixed(1)}%</p>
                 </div>
                 <div>
                   <p className="text-sm text-gray-600">Risk Level</p>
