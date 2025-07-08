@@ -86,7 +86,7 @@ async def run_burnout_analysis(
             run_analysis_task,
             analysis_id=analysis.id,
             integration_id=integration.id,
-            api_token=integration.token,
+            api_token=integration.api_token,
             time_range=request.time_range,
             include_weekends=request.include_weekends
         )
@@ -248,15 +248,15 @@ async def run_analysis_task(
         logger.info(f"BACKGROUND_TASK: Initializing BurnoutAnalyzerService for analysis {analysis_id}")
         analyzer_service = BurnoutAnalyzerService(api_token)
         
-        # Run the analysis with timeout (5 minutes max)
-        logger.info(f"BACKGROUND_TASK: Starting burnout analysis with 5-minute timeout for analysis {analysis_id}")
+        # Run the analysis with timeout (15 minutes max)
+        logger.info(f"BACKGROUND_TASK: Starting burnout analysis with 15-minute timeout for analysis {analysis_id}")
         try:
             results = await asyncio.wait_for(
                 analyzer_service.analyze_burnout(
                     time_range_days=time_range,
                     include_weekends=include_weekends
                 ),
-                timeout=300.0  # 5 minutes
+                timeout=900.0  # 15 minutes
             )
             logger.info(f"BACKGROUND_TASK: Analysis {analysis_id} completed successfully")
             
@@ -273,17 +273,27 @@ async def run_analysis_task(
             analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
             if analysis:
                 analysis.status = "failed"
-                analysis.error_message = "Analysis timed out after 5 minutes"
+                analysis.error_message = "Analysis timed out after 15 minutes"
                 analysis.completed_at = datetime.now()
                 db.commit()
                 
         except Exception as analysis_error:
-            # Handle analysis-specific errors - try to save partial data
+            # Handle analysis-specific errors
             logger.error(f"BACKGROUND_TASK: Analysis {analysis_id} failed: {analysis_error}")
             
             analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
             if analysis:
-                # Try to collect raw data even if analysis failed
+                # Check if this is a permission error - if so, fail immediately
+                error_message = str(analysis_error)
+                if "Cannot access incidents endpoint" in error_message or "incidents:read" in error_message:
+                    logger.error(f"BACKGROUND_TASK: Permission error detected for analysis {analysis_id}, failing immediately")
+                    analysis.status = "failed"
+                    analysis.error_message = error_message
+                    analysis.completed_at = datetime.now()
+                    db.commit()
+                    return
+                
+                # For other errors, try to collect raw data even if analysis failed
                 try:
                     logger.info(f"BACKGROUND_TASK: Attempting to save raw data for failed analysis {analysis_id}")
                     raw_data = await analyzer_service.client.collect_analysis_data(days_back=time_range)
