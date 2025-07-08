@@ -1008,15 +1008,17 @@ export default function Dashboard() {
     { date: "Week 1", score: currentAnalysis.analysis_data.team_health.overall_score * 10 },
   ] : []
   
-  const memberBarData = currentAnalysis?.analysis_data?.team_analysis?.members?.map((member) => ({
-    name: member.user_name.split(" ")[0],
-    fullName: member.user_name,
-    score: member.burnout_score * 10, // Convert 0-10 scale to 0-100 for display
-    riskLevel: member.risk_level,
-    fill: member.risk_level === "high" ? "#dc2626" :      // Red for high
-          member.risk_level === "medium" ? "#f59e0b" :    // Amber for medium
-          "#10b981",                                       // Green for low
-  })) || []
+  const memberBarData = currentAnalysis?.analysis_data?.team_analysis?.members
+    ?.filter((member) => member.incident_count > 0) // Filter out users with no incidents
+    ?.map((member) => ({
+      name: member.user_name.split(" ")[0],
+      fullName: member.user_name,
+      score: member.burnout_score * 10, // Convert 0-10 scale to 0-100 for display
+      riskLevel: member.risk_level,
+      fill: member.risk_level === "high" ? "#dc2626" :      // Red for high
+            member.risk_level === "medium" ? "#f59e0b" :    // Amber for medium
+            "#10b981",                                       // Green for low
+    })) || []
   
   const members = currentAnalysis?.analysis_data?.team_analysis?.members || []
   const burnoutFactors = members.length > 0 ? [
@@ -1593,52 +1595,61 @@ export default function Dashboard() {
               <Card className="mb-6">
                 <CardHeader>
                   <CardTitle>Organization Member Scores</CardTitle>
-                  <CardDescription>Burnout risk levels across organization members</CardDescription>
+                  <CardDescription>Burnout risk levels across organization members with incident data</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="h-[350px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={memberBarData} margin={{ top: 20, right: 30, bottom: 60, left: 20 }}>
-                        <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis 
-                          dataKey="fullName" 
-                          angle={-45}
-                          textAnchor="end"
-                          height={60}
-                          interval={0}
-                          tick={{ fontSize: 11 }}
-                        />
-                        <YAxis domain={[0, 100]} />
-                        <Tooltip 
-                          formatter={(value, name, props) => {
-                            const data = props.payload;
-                            return [
-                              `${Number(value).toFixed(2)}%`, 
-                              `Burnout Score (${data.riskLevel.charAt(0).toUpperCase() + data.riskLevel.slice(1)} Risk)`
-                            ];
-                          }}
-                          labelFormatter={(label, payload) => {
-                            const data = payload?.[0]?.payload;
-                            return data ? `${data.fullName}` : label;
-                          }}
-                          contentStyle={{
-                            backgroundColor: 'white',
-                            border: '1px solid #e5e7eb',
-                            borderRadius: '8px',
-                            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
-                          }}
-                        />
-                        <Bar 
-                          dataKey="score" 
-                          radius={[4, 4, 0, 0]}
-                        >
-                          {memberBarData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={entry.fill} />
-                          ))}
-                        </Bar>
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
+                  {memberBarData.length > 0 ? (
+                    <div className="h-[350px]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={memberBarData} margin={{ top: 20, right: 30, bottom: 60, left: 20 }}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis 
+                            dataKey="fullName" 
+                            angle={-45}
+                            textAnchor="end"
+                            height={60}
+                            interval={0}
+                            tick={{ fontSize: 11 }}
+                          />
+                          <YAxis domain={[0, 100]} />
+                          <Tooltip 
+                            formatter={(value, name, props) => {
+                              const data = props.payload;
+                              return [
+                                `${Number(value).toFixed(2)}%`, 
+                                `Burnout Score (${data.riskLevel.charAt(0).toUpperCase() + data.riskLevel.slice(1)} Risk)`
+                              ];
+                            }}
+                            labelFormatter={(label, payload) => {
+                              const data = payload?.[0]?.payload;
+                              return data ? `${data.fullName}` : label;
+                            }}
+                            contentStyle={{
+                              backgroundColor: 'white',
+                              border: '1px solid #e5e7eb',
+                              borderRadius: '8px',
+                              boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
+                            }}
+                          />
+                          <Bar 
+                            dataKey="score" 
+                            radius={[4, 4, 0, 0]}
+                          >
+                            {memberBarData.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={entry.fill} />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  ) : (
+                    <div className="h-[350px] flex items-center justify-center text-gray-500">
+                      <div className="text-center">
+                        <p className="text-lg font-medium">No incident data available</p>
+                        <p className="text-sm mt-2">Members with zero incidents are not displayed in this chart</p>
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 
