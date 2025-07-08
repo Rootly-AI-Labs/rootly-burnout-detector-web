@@ -6,6 +6,7 @@ Uses the same calculation methodology as Rootly for consistent results.
 """
 
 import logging
+import math
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 from app.core.pagerduty_client import PagerDutyAPIClient
@@ -448,43 +449,75 @@ class PagerDutyBurnoutAnalyzerService:
         """Calculate overall team health metrics - same methodology as Rootly."""
         if not members:
             return {
-                "overall_score": 0.0,
-                "health_status": "insufficient_data",
-                "risk_distribution": {"high": 0, "medium": 0, "low": 0},
-                "average_burnout_score": 0.0,
-                "total_members": 0
+                "overall_score": 10,  # Perfect health if no data
+                "risk_distribution": {"low": 0, "medium": 0, "high": 0},
+                "average_burnout_score": 0,
+                "health_status": "excellent",
+                "members_at_risk": 0
             }
         
-        # Calculate risk distribution
-        risk_counts = {"high": 0, "medium": 0, "low": 0}
-        total_burnout_score = 0.0
+        # Calculate averages and distributions with null safety
+        burnout_scores = [m.get("burnout_score", 0) for m in members if m and isinstance(m, dict)]
+        avg_burnout = sum(burnout_scores) / len(burnout_scores) if burnout_scores else 0
         
+        # Count risk levels (updated for 3-tier system)
+        risk_dist = {"low": 0, "medium": 0, "high": 0}
         for member in members:
-            risk_level = member.get("risk_level", "low")
-            risk_counts[risk_level] = risk_counts.get(risk_level, 0) + 1
-            total_burnout_score += member.get("burnout_score", 0.0)
-        
-        avg_burnout_score = total_burnout_score / len(members)
+            if member and isinstance(member, dict):
+                risk_level = member.get("risk_level", "low")
+                if risk_level in risk_dist:
+                    risk_dist[risk_level] += 1
+                else:
+                    risk_dist["low"] += 1
         
         # Calculate overall health score (inverse of burnout)
-        overall_score = 1.0 - avg_burnout_score
+        # Use a more balanced approach that ensures reasonable health scores
+        # even for high burnout levels
+        
+        # Define key thresholds and their corresponding health scores
+        # This creates a piecewise linear function with gentler slopes
+        if avg_burnout <= 2:
+            # Low burnout (0-2) maps to excellent health (10-8.5)
+            # Slope: -0.75
+            overall_score = 10 - (avg_burnout * 0.75)
+        elif avg_burnout <= 4:
+            # Low-medium burnout (2-4) maps to good health (8.5-7)
+            # Slope: -0.75
+            overall_score = 8.5 - ((avg_burnout - 2) * 0.75)
+        elif avg_burnout <= 6:
+            # Medium burnout (4-6) maps to fair health (7-5)
+            # Slope: -1.0
+            overall_score = 7 - ((avg_burnout - 4) * 1.0)
+        elif avg_burnout <= 8:
+            # High burnout (6-8) maps to concerning health (5-3)
+            # Slope: -1.0
+            overall_score = 5 - ((avg_burnout - 6) * 1.0)
+        else:
+            # Very high burnout (8-10) maps to poor health (3-2)
+            # Slope: -0.5 (gentler slope to avoid extremely low scores)
+            overall_score = 3 - ((avg_burnout - 8) * 0.5)
+        
+        # Ensure minimum score of 2.0 (20% when displayed)
+        overall_score = max(2.0, overall_score)
         
         # Determine health status
-        if overall_score >= 0.8:
+        if overall_score >= 8:
             health_status = "excellent"
-        elif overall_score >= 0.6:
+        elif overall_score >= 6:
             health_status = "good"
-        elif overall_score >= 0.4:
-            health_status = "concerning"
+        elif overall_score >= 4:
+            health_status = "fair"
+        elif overall_score >= 2:
+            health_status = "poor"
         else:
             health_status = "critical"
         
         return {
-            "overall_score": overall_score,
+            "overall_score": round(overall_score, 2),
+            "risk_distribution": risk_dist,
+            "average_burnout_score": round(avg_burnout, 2),
             "health_status": health_status,
-            "risk_distribution": risk_counts,
-            "average_burnout_score": avg_burnout_score,
-            "total_members": len(members)
+            "members_at_risk": risk_dist["high"]
         }
     
     def _generate_insights(

@@ -2,6 +2,7 @@
 Burnout analysis service for analyzing incident patterns and calculating burnout metrics.
 """
 import logging
+import math
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional
 from collections import defaultdict
@@ -598,7 +599,7 @@ class BurnoutAnalyzerService:
         if not member_analyses:
             return {
                 "overall_score": 10,  # Perfect health if no data
-                "risk_distribution": {"low": 0, "medium": 0, "high": 0, "critical": 0},
+                "risk_distribution": {"low": 0, "medium": 0, "high": 0},
                 "average_burnout_score": 0,
                 "health_status": "excellent",
                 "members_at_risk": 0
@@ -619,7 +620,34 @@ class BurnoutAnalyzerService:
                     risk_dist["low"] += 1
         
         # Calculate overall health score (inverse of burnout)
-        overall_score = 10 - avg_burnout
+        # Use a more balanced approach that ensures reasonable health scores
+        # even for high burnout levels
+        
+        # Define key thresholds and their corresponding health scores
+        # This creates a piecewise linear function with gentler slopes
+        if avg_burnout <= 2:
+            # Low burnout (0-2) maps to excellent health (10-8.5)
+            # Slope: -0.75
+            overall_score = 10 - (avg_burnout * 0.75)
+        elif avg_burnout <= 4:
+            # Low-medium burnout (2-4) maps to good health (8.5-7)
+            # Slope: -0.75
+            overall_score = 8.5 - ((avg_burnout - 2) * 0.75)
+        elif avg_burnout <= 6:
+            # Medium burnout (4-6) maps to fair health (7-5)
+            # Slope: -1.0
+            overall_score = 7 - ((avg_burnout - 4) * 1.0)
+        elif avg_burnout <= 8:
+            # High burnout (6-8) maps to concerning health (5-3)
+            # Slope: -1.0
+            overall_score = 5 - ((avg_burnout - 6) * 1.0)
+        else:
+            # Very high burnout (8-10) maps to poor health (3-2)
+            # Slope: -0.5 (gentler slope to avoid extremely low scores)
+            overall_score = 3 - ((avg_burnout - 8) * 0.5)
+        
+        # Ensure minimum score of 2.0 (20% when displayed)
+        overall_score = max(2.0, overall_score)
         
         # Determine health status
         if overall_score >= 8:
@@ -628,8 +656,10 @@ class BurnoutAnalyzerService:
             health_status = "good"
         elif overall_score >= 4:
             health_status = "fair"
-        else:
+        elif overall_score >= 2:
             health_status = "poor"
+        else:
+            health_status = "critical"
         
         return {
             "overall_score": round(overall_score, 2),
