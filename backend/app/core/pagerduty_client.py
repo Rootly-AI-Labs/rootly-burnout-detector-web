@@ -210,6 +210,69 @@ class PagerDutyAPIClient:
             logger.error(f"Error fetching PagerDuty services: {e}")
             return []
     
+    async def collect_analysis_data(self, days_back: int = 30) -> Dict[str, Any]:
+        """Collect all data needed for burnout analysis."""
+        logger.info(f"Starting PagerDuty data collection for last {days_back} days...")
+        
+        try:
+            # Test connection first
+            connection_test = await self.test_connection()
+            if not connection_test["valid"]:
+                raise Exception(f"Connection test failed: {connection_test.get('error', 'Unknown error')}")
+            
+            # Calculate date range
+            end_date = datetime.now(pytz.UTC)
+            start_date = end_date - timedelta(days=days_back)
+            
+            # Collect users and incidents in parallel
+            users_task = self.get_users(limit=100)
+            incidents_task = self.get_incidents(since=start_date, until=end_date, limit=500)
+            
+            users = await users_task
+            incidents = await incidents_task
+            
+            # Validate data
+            if not users:
+                raise Exception("No users found - check API permissions")
+            
+            # Process and return data
+            processed_data = {
+                "users": users,
+                "incidents": incidents,
+                "collection_metadata": {
+                    "timestamp": datetime.now().isoformat(),
+                    "days_analyzed": days_back,
+                    "total_users": len(users),
+                    "total_incidents": len(incidents),
+                    "date_range": {
+                        "start": start_date.isoformat(),
+                        "end": end_date.isoformat()
+                    }
+                }
+            }
+            
+            logger.info(f"PagerDuty data collection completed: {len(users)} users, {len(incidents)} incidents")
+            return processed_data
+            
+        except Exception as e:
+            logger.error(f"PagerDuty data collection failed: {e}")
+            # Return minimal data structure instead of failing completely
+            return {
+                "users": [],
+                "incidents": [],
+                "collection_metadata": {
+                    "timestamp": datetime.now().isoformat(),
+                    "days_analyzed": days_back,
+                    "total_users": 0,
+                    "total_incidents": 0,
+                    "error": str(e),
+                    "date_range": {
+                        "start": (datetime.now() - timedelta(days=days_back)).isoformat(),
+                        "end": datetime.now().isoformat()
+                    }
+                }
+            }
+    
     def normalize_to_common_format(
         self, 
         incidents: List[Dict[str, Any]], 
