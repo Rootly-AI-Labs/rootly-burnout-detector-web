@@ -1179,7 +1179,8 @@ export default function Dashboard() {
               {!sidebarCollapsed && previousAnalyses.length > 0 && (
                 <p className="text-xs text-gray-400 uppercase tracking-wide px-2 py-1 mt-4">Recent</p>
               )}
-              {previousAnalyses.slice(0, 5).map((analysis) => {
+              <div className="max-h-96 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-gray-800">
+                {previousAnalyses.slice(0, 20).map((analysis) => {
                 const analysisDate = new Date(analysis.created_at)
                 const timeStr = analysisDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
                 const dateStr = analysisDate.toLocaleDateString([], { month: 'short', day: 'numeric' })
@@ -1272,6 +1273,7 @@ export default function Dashboard() {
                   </div>
                 )
               })}
+              </div>
             </div>
           </div>
 
