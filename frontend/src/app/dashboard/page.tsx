@@ -1852,6 +1852,25 @@ export default function Dashboard() {
             <DialogTitle>Start New Analysis</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
+            {/* Previous Analysis Information */}
+            {currentAnalysis && (
+              <div className="bg-gray-50 p-3 rounded-md">
+                <h4 className="text-sm font-medium text-gray-700 mb-2">Previous Analysis</h4>
+                <div className="space-y-1 text-sm text-gray-600">
+                  <div>
+                    <span className="font-medium">Organization:</span>{" "}
+                    {(() => {
+                      const integration = integrations.find(i => i.id === currentAnalysis.integration_id);
+                      return integration ? integration.organization_name || integration.name : "Unknown";
+                    })()}
+                  </div>
+                  <div>
+                    <span className="font-medium">Time Range:</span>{" "}
+                    {currentAnalysis.time_range || 30} days
+                  </div>
+                </div>
+              </div>
+            )}
             <div>
               <label className="text-sm font-medium text-gray-700 mb-2 block">
                 Select Organization
