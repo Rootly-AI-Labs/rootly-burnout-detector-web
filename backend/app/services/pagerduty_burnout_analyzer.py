@@ -529,7 +529,8 @@ class PagerDutyBurnoutAnalyzerService:
         insights = []
         
         risk_distribution = team_health["risk_distribution"]
-        total_members = team_health["total_members"]
+        members = team_analysis.get("members", [])
+        total_members = len(members)
         
         # High-risk members insight
         if risk_distribution["high"] > 0:
