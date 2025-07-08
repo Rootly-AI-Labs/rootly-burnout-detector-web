@@ -11,6 +11,7 @@ authlib
 python-jose[cryptography]
 passlib[bcrypt]
 python-multipart
+cryptography
 
 # HTTP client for API calls
 httpx
