@@ -26,5 +26,8 @@ pydantic-settings
 pytz
 python-dateutil
 
+# Sentiment analysis
+vaderSentiment
+
 # Development
 pytest

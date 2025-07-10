@@ -14,6 +14,7 @@ class SlackIntegration(Base):
     slack_token = Column(Text, nullable=True)  # Encrypted Slack token
     slack_user_id = Column(String(20), nullable=False)  # Slack user ID (e.g., U01234567)
     workspace_id = Column(String(20), nullable=False)  # Slack workspace/team ID
+    webhook_url = Column(Text, nullable=True)  # Slack webhook URL for posting messages
     token_source = Column(String(20), default="oauth")  # 'oauth' or 'manual'
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

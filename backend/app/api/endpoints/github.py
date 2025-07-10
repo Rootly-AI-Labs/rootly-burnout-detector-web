@@ -9,6 +9,7 @@ import json
 from cryptography.fernet import Fernet
 import base64
 from datetime import datetime
+from pydantic import BaseModel
 
 from ...models import get_db, User, GitHubIntegration, UserCorrelation
 from ...auth.dependencies import get_current_user
@@ -44,6 +45,13 @@ async def connect_github(
     Initiate GitHub OAuth flow for integration.
     Returns authorization URL for frontend to redirect to.
     """
+    # Check if OAuth credentials are configured
+    if not settings.GITHUB_CLIENT_ID or not settings.GITHUB_CLIENT_SECRET:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="GitHub OAuth is not configured. Please contact your administrator to set up GitHub integration."
+        )
+    
     # Generate state parameter for security
     state = secrets.token_urlsafe(32)
     
@@ -237,6 +245,15 @@ async def get_github_status(
             "integration": None
         }
     
+    # Get token preview
+    token_preview = None
+    try:
+        if integration.github_token:
+            decrypted_token = decrypt_token(integration.github_token)
+            token_preview = f"...{decrypted_token[-4:]}" if decrypted_token else None
+    except Exception:
+        pass  # Token preview is optional
+    
     return {
         "connected": True,
         "integration": {
@@ -247,13 +264,17 @@ async def get_github_status(
             "is_oauth": integration.is_oauth,
             "supports_refresh": integration.supports_refresh,
             "connected_at": integration.created_at.isoformat(),
-            "last_updated": integration.updated_at.isoformat()
+            "last_updated": integration.updated_at.isoformat(),
+            "token_preview": token_preview
         }
     }
 
+class TokenRequest(BaseModel):
+    token: str
+
 @router.post("/token")
 async def connect_github_with_token(
-    token: str,
+    request: TokenRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -263,7 +284,7 @@ async def connect_github_with_token(
     try:
         # Validate token by making a test API call
         headers = {
-            "Authorization": f"token {token}",
+            "Authorization": f"token {request.token}",
             "Accept": "application/json"
         }
         
@@ -286,31 +307,31 @@ async def connect_github_with_token(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Failed to get GitHub username from token"
                 )
-        
-        # Get user's organizations (optional)
-        try:
-            orgs_response = await client.get("https://api.github.com/user/orgs", headers=headers)
-            if orgs_response.status_code == 200:
-                orgs = orgs_response.json()
-                org_names = [org.get("login") for org in orgs if org.get("login")]
-            else:
+            
+            # Get user's organizations (optional)
+            try:
+                orgs_response = await client.get("https://api.github.com/user/orgs", headers=headers)
+                if orgs_response.status_code == 200:
+                    orgs = orgs_response.json()
+                    org_names = [org.get("login") for org in orgs if org.get("login")]
+                else:
+                    org_names = []
+            except Exception:
                 org_names = []
-        except Exception:
-            org_names = []
-        
-        # Get user's emails for correlation (optional)
-        try:
-            emails_response = await client.get("https://api.github.com/user/emails", headers=headers)
-            if emails_response.status_code == 200:
-                emails = emails_response.json()
-                email_addresses = [email.get("email") for email in emails if email.get("verified")]
-            else:
+            
+            # Get user's emails for correlation (optional)
+            try:
+                emails_response = await client.get("https://api.github.com/user/emails", headers=headers)
+                if emails_response.status_code == 200:
+                    emails = emails_response.json()
+                    email_addresses = [email.get("email") for email in emails if email.get("verified")]
+                else:
+                    email_addresses = []
+            except Exception:
                 email_addresses = []
-        except Exception:
-            email_addresses = []
         
         # Encrypt the token
-        encrypted_token = encrypt_token(token)
+        encrypted_token = encrypt_token(request.token)
         
         # Check if integration already exists
         existing_integration = db.query(GitHubIntegration).filter(

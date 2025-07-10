@@ -172,7 +172,7 @@ class SlackIntegrationOAuth:
         params = {
             "client_id": self.client_id,
             "redirect_uri": self.redirect_uri,
-            "scope": "channels:history groups:history users:read",  # Scopes for data collection
+            "scope": "channels:history groups:history users:read conversations.history channels:read groups:read users:read.email",  # Scopes for comprehensive data collection
             "user_scope": "search:read",  # User-level scopes
             "state": state or ""
         }
@@ -271,6 +271,10 @@ class SlackIntegrationOAuth:
             "channels_access": False,
             "users_access": False,
             "workspace_access": False,
+            "conversations_history": False,
+            "channels_history": False,
+            "groups_history": False,
+            "users_conversations": False,
             "errors": []
         }
         
@@ -304,6 +308,43 @@ class SlackIntegrationOAuth:
                     permissions["errors"].append(f"Users access failed: {result.get('error', 'Unknown error')}")
             except Exception as e:
                 permissions["errors"].append(f"Users access test failed: {str(e)}")
+            
+            # Test conversations history access (required for message counting)
+            try:
+                # Get a sample channel to test history access
+                channels_response = await client.get("https://slack.com/api/conversations.list", headers=headers, params={"limit": 1})
+                channels_result = channels_response.json()
+                if channels_result.get("ok") and channels_result.get("channels"):
+                    channel_id = channels_result["channels"][0]["id"]
+                    
+                    # Test conversations.history API
+                    response = await client.get("https://slack.com/api/conversations.history", headers=headers, params={"channel": channel_id, "limit": 1})
+                    result = response.json()
+                    permissions["conversations_history"] = result.get("ok", False)
+                    if not permissions["conversations_history"]:
+                        permissions["errors"].append(f"Conversations history access failed: {result.get('error', 'Unknown error')}")
+                else:
+                    permissions["errors"].append("No channels available to test history access")
+            except Exception as e:
+                permissions["errors"].append(f"Conversations history test failed: {str(e)}")
+            
+            # Test users.conversations access (required for getting user's channels)
+            try:
+                # Try to get user's conversations (this requires auth.test to get user_id first)
+                auth_response = await client.get("https://slack.com/api/auth.test", headers=headers)
+                auth_result = auth_response.json()
+                if auth_result.get("ok") and auth_result.get("user_id"):
+                    user_id = auth_result["user_id"]
+                    
+                    response = await client.get("https://slack.com/api/users.conversations", headers=headers, params={"user": user_id, "limit": 1})
+                    result = response.json()
+                    permissions["users_conversations"] = result.get("ok", False)
+                    if not permissions["users_conversations"]:
+                        permissions["errors"].append(f"Users conversations access failed: {result.get('error', 'Unknown error')}")
+                else:
+                    permissions["errors"].append("Could not get user ID for conversations test")
+            except Exception as e:
+                permissions["errors"].append(f"Users conversations test failed: {str(e)}")
         
         return permissions
 

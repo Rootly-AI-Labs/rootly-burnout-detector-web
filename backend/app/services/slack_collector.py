@@ -4,10 +4,12 @@ Slack data collector for web app burnout analysis.
 
 import json
 import logging
+import asyncio
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 from collections import defaultdict
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 # from sqlalchemy.orm import Session
 # from ..models import SlackIntegration
 
@@ -24,14 +26,20 @@ class SlackCollector:
         # Business hours configuration
         self.business_hours = {'start': 9, 'end': 17}
         
+        # Initialize VADER sentiment analyzer
+        self.sentiment_analyzer = SentimentIntensityAnalyzer()
+        
         # Manual name mappings (based on user names from Rootly)
-        # These map from Rootly user full names to Slack user IDs
-        # Names should match the format used in Slack messages: "**Name**"
+        # For demo purposes, map all names to themselves for bot message matching
         self.name_to_slack_mappings = {
-            "Spencer Cheng": "U093A3G69GC",  # Real Slack user ID
-            "Jasmeet Singh": "U002JASMEET",  # Needs real Slack user ID
-            "Sylvain Kalache": "U003SYLVAIN",  # Needs real Slack user ID
-            "Christo Mitov": "U004CHRISTO",  # Needs real Slack user ID
+            "Spencer Cheng": "Spencer Cheng",  # Name-based matching
+            "Jasmeet Singh": "Jasmeet Singh",  # Name-based matching
+            "Sylvain Kalache": "Sylvain Kalache",  # Name-based matching
+            "Christo Mitov": "Christo Mitov",  # Name-based matching
+            "Ibrahim Elchami": "Ibrahim Elchami",  # Name-based matching
+            "Weihan Li": "Weihan Li",  # Name-based matching
+            "Alex Mingoia": "Alex Mingoia",  # Name-based matching
+            "Quentin Rousseau": "Quentin Rousseau",  # Name-based matching
             # Add more mappings as needed based on actual Slack users
         }
         
@@ -129,6 +137,7 @@ class SlackCollector:
     async def _correlate_user_to_slack(self, user_identifier: str, token: str = None, is_name: bool = False) -> Optional[str]:
         """
         Correlate a user identifier (email or name) to a Slack user ID.
+        For names, we use the name directly for matching bot messages.
         
         Args:
             user_identifier: Email or name to correlate
@@ -137,16 +146,12 @@ class SlackCollector:
         """
         logger.info(f"Slack correlation attempt for {user_identifier} (is_name: {is_name}), token={'present' if token else 'missing'}")
         
-        # First check manual mappings based on type
+        # For names, just return the name as the "user ID" for bot message matching
         if is_name:
-            logger.info(f"Checking name mappings for {user_identifier}")
-            slack_user_id = self.name_to_slack_mappings.get(user_identifier)
-            if slack_user_id:
-                logger.info(f"Found Slack correlation via name mapping: {user_identifier} -> {slack_user_id}")
-                return slack_user_id
-            else:
-                logger.warning(f"No name mapping found for {user_identifier}")
+            logger.info(f"Using name-based matching for {user_identifier}")
+            return user_identifier  # Return the name itself as the "user ID"
         else:
+            # For emails, check mappings and API discovery
             logger.info(f"Checking email mappings for {user_identifier}")
             slack_user_id = self.email_to_slack_mappings.get(user_identifier)
             if slack_user_id:
@@ -155,16 +160,16 @@ class SlackCollector:
             else:
                 logger.warning(f"No email mapping found for {user_identifier}")
             
-        # If we have a token and it's an email, try API-based discovery
-        if token and not is_name:
-            try:
-                logger.info(f"Attempting API-based discovery for {user_identifier}")
-                slack_user_id = await self._discover_slack_user_by_email(user_identifier, token)
-                if slack_user_id:
-                    logger.info(f"Found Slack correlation via API: {user_identifier} -> {slack_user_id}")
-                    return slack_user_id
-            except Exception as e:
-                logger.error(f"Error discovering Slack user for {user_identifier}: {e}")
+            # If we have a token, try API-based discovery
+            if token:
+                try:
+                    logger.info(f"Attempting API-based discovery for {user_identifier}")
+                    slack_user_id = await self._discover_slack_user_by_email(user_identifier, token)
+                    if slack_user_id:
+                        logger.info(f"Found Slack correlation via API: {user_identifier} -> {slack_user_id}")
+                        return slack_user_id
+                except Exception as e:
+                    logger.error(f"Error discovering Slack user for {user_identifier}: {e}")
         
         logger.warning(f"No Slack correlation found for {user_identifier}")
         return None
@@ -344,6 +349,282 @@ class SlackCollector:
             }
         }
     
+    async def _fetch_all_slack_messages(self, token: str, start_date: datetime, end_date: datetime) -> Dict:
+        """Fetch all messages from all accessible channels once."""
+        
+        headers = {
+            'Authorization': f'Bearer {token}',
+            'Content-Type': 'application/json'
+        }
+        
+        base_url = "https://slack.com/api"
+        all_messages = {}
+        rate_limited_channels = []
+        errors = []
+        
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                # Get all channels the bot has access to
+                channels_url = f"{base_url}/conversations.list"
+                channels_params = {'types': 'public_channel', 'limit': 1000}
+                
+                async with session.get(channels_url, headers=headers, params=channels_params) as resp:
+                    if resp.status == 200:
+                        channels_data = await resp.json()
+                        if channels_data.get('ok'):
+                            channels = channels_data.get('channels', [])
+                            logger.info(f"Successfully retrieved {len(channels)} channels")
+                            
+                            # Convert dates to timestamps for Slack API
+                            buffer_days = 60  # Look back 60 days for demo messages
+                            buffered_start_date = start_date - timedelta(days=buffer_days)
+                            start_ts = buffered_start_date.timestamp()
+                            end_ts = end_date.timestamp()
+                            
+                            logger.info(f"Fetching messages from {start_ts} to {end_ts} (buffered by {buffer_days} days)")
+                            
+                            # Fetch messages from all accessible channels
+                            for channel in channels:
+                                channel_id = channel.get('id')
+                                channel_name = channel.get('name', 'unknown')
+                                
+                                if not channel_id:
+                                    continue
+                                    
+                                try:
+                                    await asyncio.sleep(2)  # Increased rate limiting delay
+                                    
+                                    logger.info(f"Fetching messages from #{channel_name}")
+                                    
+                                    history_url = f"{base_url}/conversations.history"
+                                    all_channel_messages = []
+                                    cursor = None
+                                    
+                                    # Handle pagination
+                                    while True:
+                                        history_params = {
+                                            'channel': channel_id,
+                                            'oldest': start_ts,
+                                            'latest': end_ts,
+                                            'limit': 1000
+                                        }
+                                        if cursor:
+                                            history_params['cursor'] = cursor
+                                        
+                                        async with session.get(history_url, headers=headers, params=history_params) as hist_resp:
+                                            if hist_resp.status == 200:
+                                                history_data = await hist_resp.json()
+                                                if history_data.get('ok'):
+                                                    messages = history_data.get('messages', [])
+                                                    all_channel_messages.extend(messages)
+                                                    
+                                                    # Check if there are more pages
+                                                    if history_data.get('has_more') and history_data.get('response_metadata', {}).get('next_cursor'):
+                                                        cursor = history_data['response_metadata']['next_cursor']
+                                                        await asyncio.sleep(1)  # Rate limiting between pages
+                                                    else:
+                                                        break
+                                                else:
+                                                    logger.error(f"Slack API error for #{channel_name}: {history_data.get('error', 'unknown')}")
+                                                    break
+                                            elif hist_resp.status == 429:
+                                                retry_after = hist_resp.headers.get('Retry-After', '60')
+                                                wait_time = int(retry_after)
+                                                logger.warning(f"Rate limited for #{channel_name}, waiting {wait_time} seconds...")
+                                                rate_limited_channels.append(channel_name)
+                                                await asyncio.sleep(wait_time)
+                                                break
+                                            else:
+                                                logger.error(f"HTTP error {hist_resp.status} for #{channel_name}")
+                                                break
+                                    
+                                    logger.info(f"Found {len(all_channel_messages)} total messages in #{channel_name}")
+                                    all_messages[channel_name] = all_channel_messages
+                                                
+                                except Exception as e:
+                                    logger.error(f"Error getting messages from #{channel_name}: {e}")
+                                    errors.append(f"Exception for #{channel_name}: {str(e)}")
+                                    continue
+                                    
+                        else:
+                            logger.warning(f"Slack API error for channels: {channels_data.get('error')}")
+                    else:
+                        logger.warning(f"Slack API HTTP error for channels: {resp.status}")
+                        
+        except Exception as e:
+            logger.error(f"Error fetching Slack messages: {e}")
+            errors.append(f"General error: {str(e)}")
+            
+        return {
+            "messages": all_messages,
+            "rate_limited_channels": rate_limited_channels,
+            "errors": errors
+        }
+    
+    def _process_user_messages(self, user_id: str, email: str, start_date: datetime, end_date: datetime, all_messages: Dict) -> Dict:
+        """Process cached messages for a specific user."""
+        
+        days_analyzed = (end_date - start_date).days
+        total_messages = 0
+        after_hours_messages = 0
+        weekend_messages = 0
+        
+        # Sentiment tracking
+        sentiment_scores = []
+        negative_messages = 0
+        positive_messages = 0
+        neutral_messages = 0
+        stress_indicators = 0
+        
+        # Get the display name for this user_id
+        user_display_name = None
+        for name, slack_id in self.name_to_slack_mappings.items():
+            if slack_id == user_id:
+                user_display_name = name
+                break
+        
+        # Check if this is name-based matching (user_id is the same as the display name)
+        is_name_based_user = user_id == user_display_name
+        
+        logger.info(f"Processing messages for {user_display_name} (name-based: {is_name_based_user})")
+        
+        # Process messages from all channels
+        for channel_name, messages in all_messages.items():
+            channel_user_messages = []
+            
+            # Include direct user messages (only for real users with actual Slack IDs)
+            if not is_name_based_user:
+                for msg in messages:
+                    if msg.get('user') == user_id:
+                        channel_user_messages.append(msg)
+            
+            # Include bot messages that contain this user's exact name
+            if user_display_name:
+                for msg in messages:
+                    if msg.get('bot_id') and msg.get('text'):
+                        extracted_name = self._extract_name_from_slack_message(msg.get('text', ''))
+                        if extracted_name and extracted_name == user_display_name:
+                            channel_user_messages.append(msg)
+                            logger.info(f"Found bot message for {user_display_name} in #{channel_name}")
+            
+            channel_message_count = len(channel_user_messages)
+            total_messages += channel_message_count
+            
+            if channel_message_count > 0:
+                logger.info(f"Channel #{channel_name}: {channel_message_count} messages for {user_display_name}")
+                
+                # Analyze timing for after-hours and weekend activity
+                for msg in channel_user_messages:
+                    msg_ts = float(msg.get('ts', 0))
+                    msg_dt = datetime.fromtimestamp(msg_ts)
+                    
+                    # Check if after hours (before 9 AM or after 5 PM)
+                    if msg_dt.hour < 9 or msg_dt.hour >= 17:
+                        after_hours_messages += 1
+                    
+                    # Check if weekend (Saturday=5, Sunday=6)
+                    if msg_dt.weekday() >= 5:
+                        weekend_messages += 1
+                    
+                    # Sentiment analysis for messages with text
+                    text = msg.get('text', '')
+                    if text:
+                        # Perform sentiment analysis using VADER
+                        sentiment = self.sentiment_analyzer.polarity_scores(text)
+                        compound_score = sentiment['compound']
+                        sentiment_scores.append(compound_score)
+                        
+                        # Categorize sentiment
+                        if compound_score <= -0.05:
+                            negative_messages += 1
+                        elif compound_score >= 0.05:
+                            positive_messages += 1
+                        else:
+                            neutral_messages += 1
+                        
+                        # Check for stress indicators
+                        stress_keywords = [
+                            'overwhelmed', 'exhausted', 'burned out', 'burnt out', 'swamped', 'drowning',
+                            'stressed', 'urgent', 'asap', 'emergency', 'crisis', 'help', 'stuck',
+                            'frustrated', 'tired', 'deadline', 'overloaded', 'pressure', 'fire'
+                        ]
+                        
+                        text_lower = text.lower()
+                        if any(keyword in text_lower for keyword in stress_keywords):
+                            stress_indicators += 1
+        
+        logger.info(f"Final message counts for {user_display_name}: total={total_messages}, after_hours={after_hours_messages}, weekend={weekend_messages}")
+        
+        # Calculate percentages
+        after_hours_percentage = (after_hours_messages / total_messages) if total_messages > 0 else 0
+        weekend_percentage = (weekend_messages / total_messages) if total_messages > 0 else 0
+        
+        # Calculate metrics
+        messages_per_day = total_messages / days_analyzed if days_analyzed > 0 else 0
+        
+        # Calculate sentiment metrics
+        avg_sentiment = sum(sentiment_scores) / len(sentiment_scores) if sentiment_scores else 0.0
+        negative_sentiment_ratio = (negative_messages / total_messages) if total_messages > 0 else 0.0
+        positive_sentiment_ratio = (positive_messages / total_messages) if total_messages > 0 else 0.0
+        stress_indicator_ratio = (stress_indicators / total_messages) if total_messages > 0 else 0.0
+        
+        # Calculate sentiment volatility (standard deviation of sentiment scores)
+        sentiment_volatility = 0.0
+        if len(sentiment_scores) > 1:
+            import statistics
+            sentiment_volatility = statistics.stdev(sentiment_scores)
+        
+        # Generate burnout indicators
+        burnout_indicators = {
+            "excessive_messaging": messages_per_day > 50,
+            "poor_sentiment": avg_sentiment < -0.1 or negative_sentiment_ratio > 0.3,
+            "late_responses": False,  # Would need response time analysis
+            "after_hours_activity": after_hours_percentage > 0.25,
+            "stress_indicators": stress_indicator_ratio > 0.1
+        }
+        
+        return {
+            'user_id': user_id,
+            'email': email,
+            'analysis_period': {
+                'start': start_date.isoformat(),
+                'end': end_date.isoformat(),
+                'days': days_analyzed
+            },
+            'metrics': {
+                'total_messages': total_messages,
+                'messages_per_day': round(messages_per_day, 1),
+                'after_hours_percentage': round(after_hours_percentage, 3),
+                'weekend_percentage': round(weekend_percentage, 3),
+                'channel_diversity': len([ch for ch, msgs in all_messages.items() if msgs]),
+                'dm_ratio': 0.2,  # Would need actual DM analysis
+                'thread_participation_rate': 0.4,  # Would need actual thread analysis
+                'avg_message_length': 50,  # Would need actual message content analysis
+                'peak_hour_concentration': 0.5,  # Would need actual time analysis
+                'response_pattern_score': 6.0,  # Would need actual response time analysis
+                'avg_sentiment': round(avg_sentiment, 3),
+                'negative_sentiment_ratio': round(negative_sentiment_ratio, 3),
+                'positive_sentiment_ratio': round(positive_sentiment_ratio, 3),
+                'stress_indicator_ratio': round(stress_indicator_ratio, 3),
+                'sentiment_volatility': round(sentiment_volatility, 3)
+            },
+            'burnout_indicators': burnout_indicators,
+            'activity_data': {
+                'messages_sent': total_messages,
+                'channels_active': len([ch for ch, msgs in all_messages.items() if msgs]),
+                'after_hours_messages': after_hours_messages,
+                'weekend_messages': weekend_messages,
+                'avg_response_time_minutes': 0,  # Would need response time analysis
+                'sentiment_score': round(avg_sentiment, 3),
+                'negative_messages': negative_messages,
+                'positive_messages': positive_messages,
+                'neutral_messages': neutral_messages,
+                'stress_indicators': stress_indicators,
+                'burnout_indicators': burnout_indicators
+            }
+        }
+    
     async def _fetch_real_slack_data(self, user_id: str, email: str, start_date: datetime, end_date: datetime, token: str, workspace_id: str) -> Dict:
         """Fetch real Slack data using the Slack API."""
         
@@ -369,9 +650,9 @@ class SlackCollector:
                     else:
                         logger.warning(f"Slack API HTTP error for user info: {resp.status}")
                 
-                # Get channels the user is in
-                channels_url = f"{base_url}/users.conversations"
-                channels_params = {'user': user_id, 'types': 'public_channel,private_channel,mpim,im', 'limit': 1000}
+                # Get all channels the bot has access to (not just user's channels)
+                channels_url = f"{base_url}/conversations.list"
+                channels_params = {'types': 'public_channel', 'limit': 1000}
                 
                 total_channels = 0
                 channels_data = {}
@@ -380,6 +661,7 @@ class SlackCollector:
                         channels_data = await resp.json()
                         if channels_data.get('ok'):
                             total_channels = len(channels_data.get('channels', []))
+                            logger.info(f"Successfully retrieved {total_channels} channels")
                         else:
                             logger.warning(f"Slack API error for channels: {channels_data.get('error')}")
                     else:
@@ -395,17 +677,32 @@ class SlackCollector:
                 # Get user's channels and count real messages
                 if channels_data.get('ok'):
                     channels = channels_data.get('channels', [])
+                    logger.info(f"Processing {len(channels)} channels for user {user_id}")
                     
                     # Convert dates to timestamps for Slack API
-                    start_ts = start_date.timestamp()
+                    # Add buffer time to catch more demo messages
+                    buffer_days = 60  # Look back 60 days for demo messages
+                    buffered_start_date = start_date - timedelta(days=buffer_days)
+                    start_ts = buffered_start_date.timestamp()
                     end_ts = end_date.timestamp()
                     
-                    for channel in channels[:10]:  # Limit to first 10 channels to avoid rate limits
+                    logger.info(f"Slack timestamp range: {start_ts} to {end_ts} (buffered by {buffer_days} days)")
+                    logger.info(f"Starting channel loop with {len(channels)} channels")
+                    
+                    for channel in channels:  # Scan all channels the bot has access to
                         channel_id = channel.get('id')
+                        channel_name = channel.get('name', 'unknown')
+                        logger.info(f"Processing channel #{channel_name} ({channel_id})")
                         if not channel_id:
+                            logger.warning(f"Skipping channel #{channel_name} - no channel ID")
                             continue
                             
                         try:
+                            # Add rate limiting - wait 1 second between requests
+                            await asyncio.sleep(1)
+                            
+                            logger.info(f"Requesting messages from #{channel_name} ({channel_id})")
+                            
                             # Get message history for this channel
                             history_url = f"{base_url}/conversations.history"
                             history_params = {
@@ -420,10 +717,43 @@ class SlackCollector:
                                     history_data = await hist_resp.json()
                                     if history_data.get('ok'):
                                         messages = history_data.get('messages', [])
+                                        logger.info(f"Found {len(messages)} total messages in channel #{channel_name} ({channel_id})")
                                         
-                                        # Count messages from this user
-                                        user_messages = [msg for msg in messages if msg.get('user') == user_id]
-                                        total_messages += len(user_messages)
+                                        # Count messages from this user AND bot messages with this user's name
+                                        user_messages = []
+                                        
+                                        # Get the display name for this user_id
+                                        user_display_name = None
+                                        for name, slack_id in self.name_to_slack_mappings.items():
+                                            if slack_id == user_id:
+                                                user_display_name = name
+                                                break
+                                        
+                                        # Check if this is name-based matching (user_id is the same as the display name)
+                                        is_name_based_user = user_id == user_display_name
+                                        
+                                        # Include direct user messages (only for real users with actual Slack IDs)
+                                        if not is_name_based_user:
+                                            for msg in messages:
+                                                if msg.get('user') == user_id:
+                                                    user_messages.append(msg)
+                                        
+                                        # Include bot messages that contain this user's exact name
+                                        if user_display_name:
+                                            logger.info(f"Looking for messages for {user_display_name} in #{channel_name}")
+                                            for msg in messages:
+                                                if msg.get('bot_id') and msg.get('text'):
+                                                    extracted_name = self._extract_name_from_slack_message(msg.get('text', ''))
+                                                    if extracted_name and extracted_name == user_display_name:
+                                                        user_messages.append(msg)
+                                                        logger.info(f"Found bot message for {user_display_name} in #{channel_name}: {msg.get('text', '')[:100]}...")
+                                        
+                                        channel_message_count = len(user_messages)
+                                        total_messages += channel_message_count
+                                        logger.info(f"Channel #{channel_name}: {channel_message_count} messages for {user_display_name}")
+                                        
+                                        if channel_message_count > 0:
+                                            logger.info(f"Running total: {total_messages} messages")
                                         
                                         # Analyze timing for after-hours and weekend activity
                                         for msg in user_messages:
@@ -438,13 +768,30 @@ class SlackCollector:
                                             if msg_dt.weekday() >= 5:
                                                 weekend_messages += 1
                                                 
+                                    else:
+                                        # Handle bot not being in channel - skip and continue
+                                        error_msg = history_data.get('error', 'unknown')
+                                        if error_msg == 'not_in_channel':
+                                            logger.info(f"Bot not in channel #{channel_name}, skipping...")
+                                        else:
+                                            logger.warning(f"Slack API error for channel #{channel_name}: {error_msg}")
+                                elif hist_resp.status == 429:
+                                    logger.warning(f"Rate limited for channel #{channel_name}, waiting 5 seconds...")
+                                    await asyncio.sleep(5)  # Wait for rate limit reset
+                                else:
+                                    logger.warning(f"Slack API HTTP error for channel #{channel_name}: {hist_resp.status}")
+                                    
                         except Exception as e:
-                            logger.debug(f"Error getting history for channel {channel_id}: {e}")
+                            logger.error(f"Error getting history for channel #{channel_name} ({channel_id}): {e}")
+                            import traceback
+                            logger.error(traceback.format_exc())
                             continue
                 
                 # Calculate percentages
                 after_hours_percentage = (after_hours_messages / total_messages) if total_messages > 0 else 0
                 weekend_percentage = (weekend_messages / total_messages) if total_messages > 0 else 0
+                
+                logger.info(f"Final message counts for {user_id}: total={total_messages}, after_hours={after_hours_messages}, weekend={weekend_messages}")
                 
                 # Calculate real metrics
                 avg_response_time = sum(response_times) / len(response_times) if response_times else 0
@@ -527,9 +874,11 @@ class SlackCollector:
             
         logger.info(f"Collecting Slack data for {slack_user_id} ({user_identifier})")
         
-        # Set up date range
+        # Set up date range with some buffer for timezone issues
         end_date = datetime.now()
-        start_date = end_date - timedelta(days=days)
+        start_date = end_date - timedelta(days=days + 1)  # Add 1 day buffer
+        
+        logger.info(f"Analyzing Slack messages from {start_date} to {end_date} ({days} days)")
         
         # Use mock data if explicitly requested (like original detector)
         if mock_mode:
@@ -539,7 +888,7 @@ class SlackCollector:
         # Use real Slack API if token provided
         if slack_token:
             logger.info(f"Using real Slack API for {slack_user_id} with token: {slack_token[:10]}...")
-            return await self._fetch_real_slack_data(slack_user_id, user_identifier, start_date, end_date, slack_token, "T0001ROOTLY")
+            return await self._fetch_real_slack_data(slack_user_id, user_identifier, start_date, end_date, slack_token, "T08DD2M7F")
         else:
             # Fall back to generated mock data for testing
             logger.warning(f"No Slack token, using generated mock data for {slack_user_id}")
@@ -627,7 +976,7 @@ class SlackCollector:
 
 async def collect_team_slack_data(team_identifiers: List[str], days: int = 30, slack_token: str = None, mock_mode: bool = False, use_names: bool = False) -> Dict[str, Dict]:
     """
-    Collect Slack data for all team members.
+    Collect Slack data for all team members efficiently by fetching messages once.
     
     Args:
         team_identifiers: List of team member emails or names
@@ -642,13 +991,57 @@ async def collect_team_slack_data(team_identifiers: List[str], days: int = 30, s
     collector = SlackCollector()
     slack_data = {}
     
+    if not slack_token:
+        logger.warning("No Slack token provided, using mock data for all users")
+        # Fall back to individual processing for mock data
+        for identifier in team_identifiers:
+            try:
+                user_data = await collector.collect_slack_data_for_user(identifier, days, slack_token, mock_mode, use_names)
+                if user_data:
+                    slack_data[identifier] = user_data
+            except Exception as e:
+                logger.error(f"Failed to collect Slack data for {identifier}: {e}")
+        return slack_data
+    
+    # Fetch all messages once
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=days)
+    
+    logger.info(f"Fetching all Slack messages once for {len(team_identifiers)} users")
+    fetch_result = await collector._fetch_all_slack_messages(slack_token, start_date, end_date)
+    
+    all_messages = fetch_result.get("messages", {})
+    rate_limited_channels = fetch_result.get("rate_limited_channels", [])
+    errors = fetch_result.get("errors", [])
+    
+    # Log rate limiting issues
+    if rate_limited_channels:
+        logger.warning(f"Rate limited channels: {rate_limited_channels}")
+    if errors:
+        logger.error(f"Slack fetch errors: {errors}")
+    
+    # Process each user against the cached messages
     for identifier in team_identifiers:
         try:
-            user_data = await collector.collect_slack_data_for_user(identifier, days, slack_token, mock_mode, use_names)
-            if user_data:
+            # Get user ID for this identifier
+            user_id = await collector._correlate_user_to_slack(identifier, slack_token, use_names)
+            
+            if user_id:
+                logger.info(f"Processing {identifier} -> {user_id}")
+                user_data = collector._process_user_messages(user_id, identifier, start_date, end_date, all_messages)
+                
+                # Add error information to user data
+                user_data["fetch_errors"] = {
+                    "rate_limited_channels": rate_limited_channels,
+                    "errors": errors
+                }
+                
                 slack_data[identifier] = user_data
+            else:
+                logger.warning(f"No Slack user ID found for {identifier}")
+                
         except Exception as e:
-            logger.error(f"Failed to collect Slack data for {identifier}: {e}")
+            logger.error(f"Failed to process Slack data for {identifier}: {e}")
     
     logger.info(f"Collected Slack data for {len(slack_data)} users out of {len(team_identifiers)}")
     return slack_data
