@@ -16,6 +16,8 @@ import {
   Activity,
   CheckCircle,
   LogOut,
+  Settings,
+  User,
   ChevronRight,
   Github,
   Chrome,
@@ -126,8 +128,8 @@ export default function OnboardingPage() {
     fetchUserData()
   }, [])
 
-  const handleConnectRootly = () => {
-    // Direct navigation to Rootly token setup
+  const handleSetupIntegrations = () => {
+    // Direct navigation to integrations setup
     router.push('/integrations')
   }
 
@@ -224,9 +226,8 @@ export default function OnboardingPage() {
               </Badge>
             </div>
 
-            <p className="text-slate-600 text-lg">Let's get your team's burnout analysis set up</p>
+            <p className="text-slate-600 text-lg">Let's connect your tools and start protecting your team's wellbeing</p>
           </div>
-
 
 
           {/* Call to Action */}
@@ -234,9 +235,9 @@ export default function OnboardingPage() {
             <Button
               size="lg"
               className="w-full sm:w-auto bg-gradient-to-r from-purple-600 to-fuchsia-500 hover:from-purple-700 hover:to-fuchsia-600 text-white px-8 py-4 text-lg font-semibold shadow-lg hover:shadow-xl transition-all duration-200"
-              onClick={handleConnectRootly}
+              onClick={handleSetupIntegrations}
             >
-              Connect Rootly Account
+              Choose Your Platform
               <ChevronRight className="w-5 h-5 ml-2" />
             </Button>
 
@@ -246,7 +247,7 @@ export default function OnboardingPage() {
           <div className="mt-12 p-6 bg-white/50 rounded-lg border border-purple-100">
             <h3 className="font-semibold text-slate-900 mb-2">What's next?</h3>
             <p className="text-sm text-slate-600 mb-3">
-              After connecting your Rootly account, we'll analyze your incident data and show you:
+              After connecting your platform, we'll analyze your incident data and show you:
             </p>
             <ul className="text-sm text-slate-600 space-y-1">
               <li className="flex items-center space-x-2">

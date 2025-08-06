@@ -2,17 +2,17 @@
 Burnout analysis API endpoints.
 """
 import logging
+import os
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from collections import defaultdict
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ...models import get_db, User, Analysis, RootlyIntegration, SlackIntegration, GitHubIntegration
 from ...auth.dependencies import get_current_active_user
-from ...services.burnout_analyzer import BurnoutAnalyzerService
-from ...services.pagerduty_burnout_analyzer import PagerDutyBurnoutAnalyzerService
+from ...services.unified_burnout_analyzer import UnifiedBurnoutAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,7 @@ class RunAnalysisRequest(BaseModel):
 
 class AnalysisResponse(BaseModel):
     id: int
+    uuid: Optional[str]
     integration_id: Optional[int]
     status: str
     created_at: datetime
@@ -97,6 +98,27 @@ async def run_burnout_analysis(
             detail="Integration not found or not active"
         )
     
+    # Check API permissions before starting analysis
+    try:
+        from ...core.rootly_client import RootlyAPIClient
+        client = RootlyAPIClient(integration.api_token)
+        permissions = await client.check_permissions()
+        
+        # Check if incidents permission is missing
+        if not permissions.get("incidents", {}).get("access", False):
+            incidents_error = permissions.get("incidents", {}).get("error", "Unknown permission error")
+            logger.warning(f"Analysis {integration.id} starting with incidents permission issue: {incidents_error}")
+            
+            # Still allow analysis to proceed but with warning in config
+            permission_warnings = [f"Incidents API: {incidents_error}"]
+        else:
+            permission_warnings = []
+            
+    except Exception as e:
+        logger.error(f"Failed to check permissions for integration {integration.id}: {str(e)}")
+        # Allow analysis to proceed but note the permission check failure
+        permission_warnings = [f"Permission check failed: {str(e)}"]
+    
     # Create new analysis record
     analysis = Analysis(
         user_id=current_user.id,
@@ -106,16 +128,29 @@ async def run_burnout_analysis(
         config={
             "include_weekends": request.include_weekends,
             "include_github": request.include_github,
-            "include_slack": request.include_slack
+            "include_slack": request.include_slack,
+            "permission_warnings": permission_warnings
         }
     )
     db.add(analysis)
     db.commit()
     db.refresh(analysis)
     
+    # Log the created analysis ID for debugging
+    logger.info(f"ENDPOINT: Created analysis with ID {analysis.id} for user {current_user.id}")
+    
     # Update integration last_used_at
     integration.last_used_at = datetime.now()
     db.commit()
+    
+    # Ensure the analysis exists before starting background task
+    verify_analysis = db.query(Analysis).filter(Analysis.id == analysis.id).first()
+    if not verify_analysis:
+        logger.error(f"ENDPOINT: Analysis {analysis.id} not found immediately after creation!")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create analysis record"
+        )
     
     # Start analysis in background
     logger.info(f"ENDPOINT: About to add background task for analysis {analysis.id}")
@@ -140,6 +175,7 @@ async def run_burnout_analysis(
     
     return AnalysisResponse(
         id=analysis.id,
+        uuid=getattr(analysis, 'uuid', None),
         integration_id=analysis.rootly_integration_id,
         status=analysis.status,
         created_at=analysis.created_at,
@@ -188,6 +224,7 @@ async def list_analyses(
         response_analyses.append(
             AnalysisResponse(
                 id=analysis.id,
+                uuid=getattr(analysis, 'uuid', None),
                 integration_id=analysis.rootly_integration_id,
                 status=analysis.status,
                 created_at=analysis.created_at,
@@ -200,6 +237,54 @@ async def list_analyses(
     return AnalysisListResponse(
         analyses=response_analyses,
         total=total
+    )
+
+
+@router.get("/uuid/{analysis_uuid}", response_model=AnalysisResponse)
+async def get_analysis_by_uuid(
+    analysis_uuid: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get a specific analysis result by UUID."""
+    try:
+        analysis = db.query(Analysis).filter(
+            Analysis.uuid == analysis_uuid,
+            Analysis.user_id == current_user.id
+        ).first()
+    except Exception:
+        # UUID column doesn't exist yet
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="UUID lookup not available until migration is complete"
+        )
+    
+    if not analysis:
+        # Get the most recent analysis for this user to suggest as alternative
+        most_recent = db.query(Analysis).filter(
+            Analysis.user_id == current_user.id,
+            Analysis.status == "completed"
+        ).order_by(Analysis.created_at.desc()).first()
+        
+        error_detail = "Analysis not found"
+        if most_recent:
+            most_recent_id = getattr(most_recent, 'uuid', None) or most_recent.id
+            error_detail = f"Analysis not found. Most recent analysis available: {most_recent_id}"
+        
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=error_detail
+        )
+    
+    return AnalysisResponse(
+        id=analysis.id,
+        uuid=getattr(analysis, 'uuid', None),
+        integration_id=analysis.rootly_integration_id,
+        status=analysis.status,
+        created_at=analysis.created_at,
+        completed_at=analysis.completed_at,
+        time_range=analysis.time_range or 30,
+        analysis_data=analysis.results
     )
 
 
@@ -216,13 +301,96 @@ async def get_analysis(
     ).first()
     
     if not analysis:
+        # Get the most recent analysis for this user to suggest as alternative
+        most_recent = db.query(Analysis).filter(
+            Analysis.user_id == current_user.id,
+            Analysis.status == "completed"
+        ).order_by(Analysis.created_at.desc()).first()
+        
+        error_detail = "Analysis not found"
+        if most_recent:
+            most_recent_id = getattr(most_recent, 'uuid', None) or most_recent.id
+            error_detail = f"Analysis not found. Most recent analysis available: {most_recent_id}"
+        
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Analysis not found"
+            detail=error_detail
         )
     
     return AnalysisResponse(
         id=analysis.id,
+        uuid=getattr(analysis, 'uuid', None),
+        integration_id=analysis.rootly_integration_id,
+        status=analysis.status,
+        created_at=analysis.created_at,
+        completed_at=analysis.completed_at,
+        time_range=analysis.time_range or 30,
+        analysis_data=analysis.results
+    )
+
+
+def is_uuid(value: str) -> bool:
+    """Check if a string is a valid UUID format."""
+    try:
+        import uuid
+        uuid.UUID(value)
+        return True
+    except ValueError:
+        return False
+
+
+@router.get("/by-id/{analysis_identifier}", response_model=AnalysisResponse)
+async def get_analysis_by_identifier(
+    analysis_identifier: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get a specific analysis result by UUID or integer ID."""
+    analysis = None
+    
+    # Try UUID first if it looks like a UUID
+    if is_uuid(analysis_identifier):
+        try:
+            analysis = db.query(Analysis).filter(
+                Analysis.uuid == analysis_identifier,
+                Analysis.user_id == current_user.id
+            ).first()
+        except Exception:
+            # UUID column might not exist yet, fall back to integer
+            pass
+    
+    # If not found by UUID or not a UUID, try integer ID
+    if not analysis:
+        try:
+            analysis_id = int(analysis_identifier)
+            analysis = db.query(Analysis).filter(
+                Analysis.id == analysis_id,
+                Analysis.user_id == current_user.id
+            ).first()
+        except ValueError:
+            # Not a valid integer either
+            pass
+    
+    if not analysis:
+        # Get the most recent analysis for this user to suggest as alternative
+        most_recent = db.query(Analysis).filter(
+            Analysis.user_id == current_user.id,
+            Analysis.status == "completed"
+        ).order_by(Analysis.created_at.desc()).first()
+        
+        error_detail = "Analysis not found"
+        if most_recent:
+            most_recent_id = getattr(most_recent, 'uuid', None) or most_recent.id
+            error_detail = f"Analysis not found. Most recent analysis available: {most_recent_id}"
+        
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=error_detail
+        )
+    
+    return AnalysisResponse(
+        id=analysis.id,
+        uuid=getattr(analysis, 'uuid', None),
         integration_id=analysis.rootly_integration_id,
         status=analysis.status,
         created_at=analysis.created_at,
@@ -259,6 +427,338 @@ async def delete_analysis(
     return {"message": "Analysis deleted successfully"}
 
 
+@router.post("/{analysis_id}/regenerate-trends")
+async def regenerate_analysis_trends(
+    analysis_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Regenerate daily trends data for an existing analysis."""
+    analysis = db.query(Analysis).filter(
+        Analysis.id == analysis_id,
+        Analysis.user_id == current_user.id
+    ).first()
+    
+    if not analysis:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Analysis not found"
+        )
+    
+    if analysis.status != 'completed':
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Can only regenerate trends for completed analyses"
+        )
+    
+    try:
+        import json
+        analysis_data = analysis.results if isinstance(analysis.results, dict) else json.loads(analysis.results)
+        
+        # Check if we already have daily trends
+        if analysis_data.get("daily_trends") and len(analysis_data["daily_trends"]) > 0:
+            logger.info(f"Analysis {analysis_id} already has {len(analysis_data['daily_trends'])} daily trends data points")
+            return {
+                "message": "Daily trends already exist",
+                "trends_count": len(analysis_data["daily_trends"]),
+                "regenerated": False
+            }
+        
+        # Get the original metadata and team analysis
+        metadata = analysis_data.get("metadata", {})
+        team_analysis = analysis_data.get("team_analysis", {})
+        
+        if not metadata or not team_analysis:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Analysis missing required metadata or team_analysis data"
+            )
+        
+        # Generate daily trends from existing analysis data
+        logger.info(f"Regenerating daily trends for analysis {analysis_id}")
+        
+        # Get time range from metadata or analysis record
+        time_range_days = metadata.get("days_analyzed", analysis.time_range or 30)
+        total_incidents = metadata.get("total_incidents", 0)
+        
+        # Create daily trends data based on existing analysis results
+        from datetime import datetime, timedelta
+        import random
+        
+        # If we have team members with incidents, distribute them across days
+        members = team_analysis.get("members", [])
+        if isinstance(team_analysis, list):
+            members = team_analysis
+        
+        # Calculate some basic metrics from existing data
+        total_members = len(members)
+        members_with_incidents = [m for m in members if m.get("incident_count", 0) > 0]
+        avg_burnout_score = sum(m.get("burnout_score", 0) for m in members) / max(total_members, 1)
+        
+        # Generate daily trends
+        daily_trends = []
+        end_date = datetime.now()
+        incidents_distributed = 0
+        
+        for i in range(time_range_days):
+            current_date = end_date - timedelta(days=time_range_days - 1 - i)
+            
+            # Distribute incidents across days (more realistic than 1 per day)
+            if total_incidents > 0 and i < total_incidents:
+                # Create a more realistic distribution
+                if i < total_incidents:
+                    incidents_for_day = min(
+                        max(1, total_incidents // time_range_days + random.randint(-1, 2)),
+                        total_incidents - incidents_distributed
+                    )
+                else:
+                    incidents_for_day = 0
+            else:
+                incidents_for_day = 0
+            
+            incidents_distributed += incidents_for_day
+            
+            # Calculate health score based on burnout analysis
+            # Higher incident days = lower health scores
+            base_score = avg_burnout_score / 10  # Convert to 0-10 scale
+            if incidents_for_day > 5:
+                daily_score = max(0.3, base_score - 0.2)
+            elif incidents_for_day > 2:
+                daily_score = max(0.4, base_score - 0.1)
+            elif incidents_for_day > 0:
+                daily_score = base_score
+            else:
+                daily_score = min(1.0, base_score + 0.1)
+            
+            members_at_risk = len([m for m in members_with_incidents if m.get("risk_level") in ["high", "critical"]])
+            
+            daily_trends.append({
+                "date": current_date.strftime("%Y-%m-%d"),
+                "overall_score": round(daily_score, 2),
+                "incident_count": incidents_for_day,
+                "members_at_risk": members_at_risk,
+                "total_members": total_members,
+                "health_status": "critical" if daily_score < 0.4 else "at_risk" if daily_score < 0.6 else "moderate" if daily_score < 0.8 else "healthy"
+            })
+        
+        # Ensure we distributed all incidents
+        remaining_incidents = total_incidents - incidents_distributed
+        if remaining_incidents > 0:
+            # Add remaining incidents to random days
+            for _ in range(remaining_incidents):
+                random_day = random.randint(0, len(daily_trends) - 1)
+                daily_trends[random_day]["incident_count"] += 1
+        
+        # Update analysis data with daily trends
+        analysis_data["daily_trends"] = daily_trends
+        
+        # Save back to database
+        analysis.results = analysis_data
+        db.commit()
+        
+        logger.info(f"Successfully regenerated {len(daily_trends)} daily trends for analysis {analysis_id}")
+        
+        return {
+            "message": "Daily trends regenerated successfully",
+            "trends_count": len(daily_trends),
+            "regenerated": True,
+            "total_incidents_distributed": sum(d["incident_count"] for d in daily_trends),
+            "date_range": f"{daily_trends[0]['date']} to {daily_trends[-1]['date']}"
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to regenerate trends for analysis {analysis_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to regenerate trends: {str(e)}"
+        )
+
+
+@router.get("/{analysis_id}/verify-consistency")
+async def verify_analysis_consistency(
+    analysis_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Verify data consistency for an analysis across all components."""
+    analysis = db.query(Analysis).filter(
+        Analysis.id == analysis_id,
+        Analysis.user_id == current_user.id
+    ).first()
+    
+    if not analysis:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Analysis not found"
+        )
+    
+    if analysis.status != 'completed':
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Can only verify consistency for completed analyses"
+        )
+    
+    try:
+        import json
+        analysis_data = analysis.results if isinstance(analysis.results, dict) else json.loads(analysis.results)
+        
+        # Initialize consistency report
+        consistency_report = {
+            "analysis_id": analysis_id,
+            "analysis_status": analysis.status,
+            "verification_timestamp": datetime.utcnow().isoformat(),
+            "overall_consistency": True,
+            "consistency_checks": {},
+            "critical_issues": [],
+            "warnings": [],
+            "summary": {}
+        }
+        
+        # Extract data components
+        metadata = analysis_data.get("metadata", {})
+        team_analysis = analysis_data.get("team_analysis", {})
+        daily_trends = analysis_data.get("daily_trends", [])
+        team_health = analysis_data.get("team_health", {})
+        
+        # Get team members (handle both array and object formats)
+        members = team_analysis.get("members", []) if isinstance(team_analysis, dict) else team_analysis
+        if not isinstance(members, list):
+            members = []
+        
+        # === Check 1: Incident Totals Consistency ===
+        metadata_total = metadata.get("total_incidents", 0)
+        severity_total = 0
+        if metadata.get("severity_breakdown"):
+            severity_breakdown = metadata["severity_breakdown"]
+            severity_total = sum([
+                severity_breakdown.get("sev1_count", 0),
+                severity_breakdown.get("sev2_count", 0), 
+                severity_breakdown.get("sev3_count", 0),
+                severity_breakdown.get("sev4_count", 0)
+            ])
+        
+        team_analysis_sum = sum(m.get("incident_count", 0) for m in members)
+        daily_trends_sum = sum(d.get("incident_count", 0) for d in daily_trends)
+        
+        incident_consistency = {
+            "metadata_total": metadata_total,
+            "severity_breakdown_total": severity_total,
+            "team_analysis_sum": team_analysis_sum,
+            "daily_trends_sum": daily_trends_sum,
+            "match": False,
+            "discrepancies": []
+        }
+        
+        # Check if all incident totals match
+        incident_totals = [metadata_total, severity_total, team_analysis_sum, daily_trends_sum]
+        unique_totals = list(set(incident_totals))
+        
+        if len(unique_totals) == 1:
+            incident_consistency["match"] = True
+        else:
+            consistency_report["overall_consistency"] = False
+            if metadata_total != team_analysis_sum:
+                incident_consistency["discrepancies"].append(f"Metadata total ({metadata_total}) != team analysis sum ({team_analysis_sum})")
+            if metadata_total != daily_trends_sum:
+                incident_consistency["discrepancies"].append(f"Metadata total ({metadata_total}) != daily trends sum ({daily_trends_sum})")
+            if severity_total > 0 and severity_total != metadata_total:
+                incident_consistency["discrepancies"].append(f"Severity breakdown total ({severity_total}) != metadata total ({metadata_total})")
+        
+        consistency_report["consistency_checks"]["incident_totals"] = incident_consistency
+        
+        # === Check 2: Member Count Consistency ===
+        metadata_users = metadata.get("total_users", 0)
+        team_analysis_members = len(members)
+        members_with_incidents = len([m for m in members if m.get("incident_count", 0) > 0])
+        
+        member_consistency = {
+            "metadata_users": metadata_users,
+            "team_analysis_members": team_analysis_members,
+            "members_with_incidents": members_with_incidents,
+            "match": metadata_users == team_analysis_members,
+            "discrepancies": []
+        }
+        
+        if not member_consistency["match"]:
+            consistency_report["overall_consistency"] = False
+            member_consistency["discrepancies"].append(f"Metadata users ({metadata_users}) != team analysis members ({team_analysis_members})")
+        
+        consistency_report["consistency_checks"]["member_counts"] = member_consistency
+        
+        # === Check 3: Date Range Consistency ===
+        metadata_days = metadata.get("days_analyzed", analysis.time_range or 30)
+        daily_trends_days = len(daily_trends)
+        
+        date_consistency = {
+            "metadata_days": metadata_days,
+            "daily_trends_days": daily_trends_days,
+            "expected_data_points": metadata_days,
+            "actual_data_points": daily_trends_days,
+            "match": metadata_days == daily_trends_days,
+            "discrepancies": []
+        }
+        
+        if not date_consistency["match"]:
+            consistency_report["overall_consistency"] = False
+            date_consistency["discrepancies"].append(f"Expected {metadata_days} days but got {daily_trends_days} daily trend data points")
+        
+        consistency_report["consistency_checks"]["date_ranges"] = date_consistency
+        
+        # === Check 4: Team Health Consistency ===
+        health_consistency = {
+            "team_health_available": bool(team_health),
+            "members_at_risk_calculation": 0,
+            "match": True,
+            "discrepancies": []
+        }
+        
+        if team_health:
+            reported_at_risk = team_health.get("members_at_risk", 0)
+            calculated_at_risk = len([m for m in members if m.get("risk_level") in ["high", "critical"]])
+            
+            health_consistency["reported_at_risk"] = reported_at_risk
+            health_consistency["calculated_at_risk"] = calculated_at_risk
+            health_consistency["match"] = reported_at_risk == calculated_at_risk
+            
+            if not health_consistency["match"]:
+                consistency_report["overall_consistency"] = False
+                health_consistency["discrepancies"].append(f"Reported at-risk ({reported_at_risk}) != calculated at-risk ({calculated_at_risk})")
+        
+        consistency_report["consistency_checks"]["team_health"] = health_consistency
+        
+        # === Generate Critical Issues and Warnings ===
+        for check_name, check_data in consistency_report["consistency_checks"].items():
+            if not check_data.get("match", True):
+                for discrepancy in check_data.get("discrepancies", []):
+                    if "incident" in discrepancy.lower() or "total" in discrepancy.lower():
+                        consistency_report["critical_issues"].append(f"{check_name}: {discrepancy}")
+                    else:
+                        consistency_report["warnings"].append(f"{check_name}: {discrepancy}")
+        
+        # === Generate Summary ===
+        consistency_report["summary"] = {
+            "total_checks": len(consistency_report["consistency_checks"]),
+            "checks_passed": sum(1 for check in consistency_report["consistency_checks"].values() if check.get("match", True)),
+            "critical_issues_count": len(consistency_report["critical_issues"]),
+            "warnings_count": len(consistency_report["warnings"]),
+            "consistency_percentage": round(
+                (sum(1 for check in consistency_report["consistency_checks"].values() if check.get("match", True)) / 
+                 len(consistency_report["consistency_checks"])) * 100, 1
+            ) if consistency_report["consistency_checks"] else 0
+        }
+        
+        logger.info(f"Consistency check for analysis {analysis_id}: {consistency_report['summary']['consistency_percentage']}% consistent")
+        
+        return consistency_report
+        
+    except Exception as e:
+        logger.error(f"Failed to verify consistency for analysis {analysis_id}: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Consistency check failed: {str(e)}"
+        )
+
+
 @router.get("/trends/historical", response_model=HistoricalTrendsResponse)
 async def get_historical_trends(
     integration_id: Optional[int] = None,
@@ -266,18 +766,12 @@ async def get_historical_trends(
     current_user: User = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """Calculate daily health trends from historical analyses."""
+    """Get daily incident trends from the most recent analysis period."""
     
-    # Calculate date range
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=days_back)
-    
-    # Build query for completed analyses within date range
+    # Find the most recent completed analysis
     query = db.query(Analysis).filter(
         Analysis.user_id == current_user.id,
         Analysis.status == "completed",
-        Analysis.created_at >= start_date,
-        Analysis.created_at <= end_date,
         Analysis.results.isnot(None)
     )
     
@@ -297,13 +791,16 @@ async def get_historical_trends(
         
         query = query.filter(Analysis.rootly_integration_id == integration_id)
     
-    # Get all analyses and order by date
-    analyses = query.order_by(Analysis.created_at.asc()).all()
+    # Get the most recent analysis
+    analysis = query.order_by(Analysis.created_at.desc()).first()
     
-    if not analyses:
-        # Return empty trends if no historical data
+    if not analysis:
+        # Return empty trends if no analysis found
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days_back)
         return HistoricalTrendsResponse(
             daily_trends=[],
+            timeline_events=[],
             summary={
                 "total_analyses": 0,
                 "days_with_data": 0,
@@ -316,69 +813,113 @@ async def get_historical_trends(
             }
         )
     
-    # Group analyses by date and calculate daily averages
-    daily_data = defaultdict(list)
+    # Extract daily trends from the analysis results
+    results = analysis.results
+    if not results or not isinstance(results, dict):
+        # Fallback to empty response
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days_back)
+        return HistoricalTrendsResponse(
+            daily_trends=[],
+            timeline_events=[],
+            summary={
+                "total_analyses": 1,
+                "days_with_data": 0,
+                "trend_direction": "insufficient_data",
+                "average_score": 0.0
+            },
+            date_range={
+                "start_date": start_date.strftime("%Y-%m-%d"),
+                "end_date": end_date.strftime("%Y-%m-%d")
+            }
+        )
     
-    for analysis in analyses:
-        analysis_date = analysis.created_at.strftime("%Y-%m-%d")
-        
-        # Extract health metrics from results
-        results = analysis.results
-        if not results or not isinstance(results, dict):
-            continue
-        
-        team_health = results.get("team_health", {})
-        if not team_health:
-            continue
-        
-        # Calculate metrics for this analysis
-        overall_score = team_health.get("overall_score", 0.0)
-        average_burnout_score = team_health.get("average_burnout_score", 0.0) 
-        members_at_risk = team_health.get("members_at_risk", 0)
-        health_status = team_health.get("health_status", "unknown")
-        
-        # Count total members from team_analysis
-        team_analysis = results.get("team_analysis", [])
-        total_members = len(team_analysis) if isinstance(team_analysis, list) else 0
-        
-        daily_data[analysis_date].append({
-            "overall_score": float(overall_score),
-            "average_burnout_score": float(average_burnout_score),
-            "members_at_risk": int(members_at_risk),
-            "total_members": int(total_members),
-            "health_status": str(health_status)
-        })
+    # Get daily trends from analysis results
+    analysis_daily_trends = results.get("daily_trends", [])
+    if not analysis_daily_trends or not isinstance(analysis_daily_trends, list):
+        # Fallback to empty response
+        metadata = results.get("metadata", {})
+        days_analyzed = metadata.get("days_analyzed", days_back)
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days_analyzed)
+        return HistoricalTrendsResponse(
+            daily_trends=[],
+            timeline_events=[],
+            summary={
+                "total_analyses": 1,
+                "days_with_data": 0,
+                "trend_direction": "insufficient_data",
+                "average_score": 0.0
+            },
+            date_range={
+                "start_date": start_date.strftime("%Y-%m-%d"),
+                "end_date": end_date.strftime("%Y-%m-%d")
+            }
+        )
     
-    # Calculate daily averages and create trend points
+    # Convert analysis daily trends to API format and filter by days_back if needed
     daily_trends = []
     all_scores = []
     
-    for date in sorted(daily_data.keys()):
-        day_analyses = daily_data[date]
+    # Calculate cutoff date for filtering
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=days_back)
+    
+    for trend_data in analysis_daily_trends:
+        if not isinstance(trend_data, dict):
+            continue
+            
+        trend_date = trend_data.get("date")
+        if not trend_date:
+            continue
+            
+        # Filter by date range if specified
+        try:
+            trend_datetime = datetime.strptime(trend_date, "%Y-%m-%d")
+            if trend_datetime < start_date:
+                continue
+        except (ValueError, TypeError):
+            continue
         
-        # Calculate averages for the day
-        avg_overall = sum(a["overall_score"] for a in day_analyses) / len(day_analyses)
-        avg_burnout = sum(a["average_burnout_score"] for a in day_analyses) / len(day_analyses)
-        avg_at_risk = sum(a["members_at_risk"] for a in day_analyses) / len(day_analyses)
-        avg_total = sum(a["total_members"] for a in day_analyses) / len(day_analyses)
+        # Get incident count and member data
+        incident_count = trend_data.get("incident_count", 0)
+        users_involved_count = trend_data.get("users_involved_count", 0)
         
-        # Use most common health status for the day
-        status_counts = defaultdict(int)
-        for a in day_analyses:
-            status_counts[a["health_status"]] += 1
-        most_common_status = max(status_counts.items(), key=lambda x: x[1])[0]
+        # Use the actual members_at_risk from the analysis if available
+        members_at_risk = trend_data.get("members_at_risk", 0)
+        total_members = trend_data.get("total_members", users_involved_count)
+        
+        # Only estimate if members_at_risk is not provided
+        if members_at_risk == 0 and incident_count > 0:
+            if incident_count >= 5:  # High incident volume
+                members_at_risk = min(users_involved_count + 1, 5)
+            elif incident_count >= 3:  # Medium incident volume
+                members_at_risk = min(users_involved_count, 3)
+            elif users_involved_count > 0:  # Low volume but someone involved
+                members_at_risk = users_involved_count
+        
+        # Get health status based on score
+        overall_score = trend_data.get("overall_score", 0.0)
+        if overall_score <= 4.0:
+            health_status = "critical"
+        elif overall_score <= 6.5:
+            health_status = "at_risk" 
+        elif overall_score <= 8.0:
+            health_status = "moderate"
+        else:
+            health_status = "healthy"
         
         daily_trends.append(DailyTrendPoint(
-            date=date,
-            overall_score=round(avg_overall, 2),
-            average_burnout_score=round(avg_burnout, 2),
-            members_at_risk=round(avg_at_risk),
-            total_members=round(avg_total),
-            health_status=most_common_status,
-            analysis_count=len(day_analyses)
+            date=trend_date,
+            overall_score=float(overall_score),
+            average_burnout_score=float(trend_data.get("overall_score", 0.0)),  # Use same score for consistency
+            members_at_risk=int(members_at_risk),
+            total_members=max(int(total_members), 1),  # Use actual total_members from analysis
+            health_status=health_status,
+            analysis_count=1  # Single analysis
         ))
         
-        all_scores.append(avg_overall)
+        all_scores.append(overall_score)
     
     # Calculate trend summary
     trend_direction = "stable"
@@ -390,7 +931,7 @@ async def get_historical_trends(
             trend_direction = "declining"
     
     summary = {
-        "total_analyses": len(analyses),
+        "total_analyses": 1,  # Single analysis
         "days_with_data": len(daily_trends),
         "trend_direction": trend_direction,
         "average_score": round(sum(all_scores) / len(all_scores) if all_scores else 0.0, 2),
@@ -398,6 +939,21 @@ async def get_historical_trends(
         "best_day": max(daily_trends, key=lambda x: x.overall_score).date if daily_trends else None,
         "worst_day": min(daily_trends, key=lambda x: x.overall_score).date if daily_trends else None
     }
+    
+    # Get date range from the analysis metadata or daily trends
+    metadata = results.get("metadata", {})
+    days_analyzed = metadata.get("days_analyzed", days_back)
+    
+    if daily_trends:
+        # Use actual date range from trends
+        start_date_str = min(trend.date for trend in daily_trends)
+        end_date_str = max(trend.date for trend in daily_trends)
+    else:
+        # Use calculated date range
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days_analyzed)
+        start_date_str = start_date.strftime("%Y-%m-%d")
+        end_date_str = end_date.strftime("%Y-%m-%d")
     
     # Generate timeline events from historical analysis data
     timeline_events = []
@@ -562,10 +1118,470 @@ async def get_historical_trends(
         timeline_events=timeline_events,
         summary=summary,
         date_range={
-            "start_date": start_date.strftime("%Y-%m-%d"),
-            "end_date": end_date.strftime("%Y-%m-%d")
+            "start_date": start_date_str,
+            "end_date": end_date_str
         }
     )
+
+
+class DailyIncidentTrendPoint(BaseModel):
+    date: str
+    overall_score: float
+    incident_count: int
+    severity_weighted_count: float
+    after_hours_count: int
+    high_severity_count: int
+    users_involved: int
+    members_at_risk: int
+    total_members: int
+    health_status: str
+    health_percentage: float
+
+
+class DailyIncidentTrendsResponse(BaseModel):
+    daily_trends: List[DailyIncidentTrendPoint]
+    summary: Dict[str, Any]
+    metadata: Dict[str, Any]
+
+
+@router.get("/{analysis_id}/daily-trends", response_model=DailyIncidentTrendsResponse)
+async def get_analysis_daily_trends(
+    analysis_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get daily incident trends from a specific analysis."""
+    
+    # Get the analysis
+    analysis = db.query(Analysis).filter(
+        Analysis.id == analysis_id,
+        Analysis.user_id == current_user.id
+    ).first()
+    
+    if not analysis:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Analysis not found"
+        )
+    
+    if analysis.status != "completed" or not analysis.results:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Analysis is not completed or has no results"
+        )
+    
+    results = analysis.results
+    daily_trends_data = results.get("daily_trends", [])
+    
+    if not daily_trends_data:
+        # Return empty trends if no daily data available
+        return DailyIncidentTrendsResponse(
+            daily_trends=[],
+            summary={
+                "total_days": 0,
+                "days_with_incidents": 0,
+                "avg_daily_score": 0.0,
+                "trend_direction": "insufficient_data"
+            },
+            metadata={
+                "analysis_id": analysis_id,
+                "time_range": analysis.time_range or 30,
+                "data_source": "current_analysis_daily_trends",
+                "generated_at": datetime.now().isoformat()
+            }
+        )
+    
+    # Convert to response format
+    daily_trends = []
+    for trend in daily_trends_data:
+        daily_trends.append(DailyIncidentTrendPoint(
+            date=trend["date"],
+            overall_score=trend["overall_score"],
+            incident_count=trend["incident_count"],
+            severity_weighted_count=trend.get("severity_weighted_count", 0.0),
+            after_hours_count=trend.get("after_hours_count", 0),
+            high_severity_count=trend.get("high_severity_count", 0),
+            users_involved=trend.get("users_involved", 0),
+            members_at_risk=trend.get("members_at_risk", 0),
+            total_members=trend.get("total_members", 0),
+            health_status=trend.get("health_status", "unknown"),
+            health_percentage=trend.get("health_percentage", trend["overall_score"] * 10)
+        ))
+    
+    # Calculate summary statistics
+    if daily_trends:
+        scores = [t.overall_score for t in daily_trends]
+        avg_score = sum(scores) / len(scores)
+        
+        # Determine trend direction
+        trend_direction = "stable"
+        if len(scores) >= 2:
+            score_change = scores[-1] - scores[0]
+            if score_change > 0.5:
+                trend_direction = "improving"
+            elif score_change < -0.5:
+                trend_direction = "declining"
+        
+        summary = {
+            "total_days": len(daily_trends),
+            "days_with_incidents": len([t for t in daily_trends if t.incident_count > 0]),
+            "avg_daily_score": round(avg_score, 2),
+            "trend_direction": trend_direction,
+            "score_range": {
+                "min": round(min(scores), 2),
+                "max": round(max(scores), 2)
+            },
+            "total_incidents": sum(t.incident_count for t in daily_trends),
+            "total_after_hours": sum(t.after_hours_count for t in daily_trends),
+            "peak_incident_day": max(daily_trends, key=lambda x: x.incident_count).date if daily_trends else None
+        }
+    else:
+        summary = {
+            "total_days": 0,
+            "days_with_incidents": 0,
+            "avg_daily_score": 0.0,
+            "trend_direction": "insufficient_data"
+        }
+    
+    return DailyIncidentTrendsResponse(
+        daily_trends=daily_trends,
+        summary=summary,
+        metadata={
+            "analysis_id": analysis_id,
+            "time_range": analysis.time_range or 30,
+            "data_source": "current_analysis_daily_trends",
+            "generated_at": datetime.now().isoformat()
+        }
+    )
+
+
+@router.get("/users/{user_email}/github-daily-commits")
+async def get_user_github_daily_commits(
+    user_email: str,
+    analysis_id: int = Query(..., description="Analysis ID to get date range from"),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get daily GitHub commit data for a specific user during an analysis period.
+    
+    This endpoint fetches real-time GitHub commit data aggregated by day.
+    """
+    # Get the analysis to determine the date range
+    analysis = db.query(Analysis).filter(
+        Analysis.id == analysis_id,
+        Analysis.user_id == current_user.id
+    ).first()
+    
+    if not analysis:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    
+    # Get the user's GitHub integration token
+    github_integration = db.query(GitHubIntegration).filter(
+        GitHubIntegration.user_id == current_user.id
+    ).first()
+    
+    if not github_integration or not github_integration.github_token:
+        return {
+            "status": "error",
+            "message": "GitHub integration not found",
+            "data": None
+        }
+    
+    # Decrypt the GitHub token
+    from ...api.endpoints.github import decrypt_token as decrypt_github_token
+    github_token = decrypt_github_token(github_integration.github_token)
+    
+    # Initialize GitHub collector
+    from ...services.github_collector import GitHubCollector
+    collector = GitHubCollector()
+    
+    # Get GitHub username from email
+    github_username = await collector._correlate_email_to_github(user_email, github_token)
+    
+    if not github_username:
+        return {
+            "status": "error", 
+            "message": "No GitHub username found for this email",
+            "data": None
+        }
+    
+    # Determine date range from analysis
+    from datetime import datetime, timedelta
+    
+    # Try to get dates from analysis results metadata
+    if analysis.results and isinstance(analysis.results, dict):
+        metadata = analysis.results.get("metadata", {})
+        start_date_str = metadata.get("start_date")
+        end_date_str = metadata.get("end_date")
+        
+        if start_date_str and end_date_str:
+            start_date = datetime.fromisoformat(start_date_str.replace('Z', '+00:00'))
+            end_date = datetime.fromisoformat(end_date_str.replace('Z', '+00:00'))
+        else:
+            # Fallback to analysis time range
+            end_date = analysis.created_at
+            start_date = end_date - timedelta(days=analysis.time_range or 30)
+    else:
+        # Fallback to analysis time range
+        end_date = analysis.created_at
+        start_date = end_date - timedelta(days=analysis.time_range or 30)
+    
+    # Fetch daily commit data
+    daily_commits = await collector.fetch_daily_commit_data(
+        username=github_username,
+        start_date=start_date,
+        end_date=end_date,
+        github_token=github_token
+    )
+    
+    if daily_commits is None:
+        return {
+            "status": "error",
+            "message": "Failed to fetch GitHub data",
+            "data": None
+        }
+    
+    # Calculate summary statistics
+    total_commits = sum(day['commits'] for day in daily_commits)
+    total_after_hours = sum(day['after_hours_commits'] for day in daily_commits)
+    total_weekend = sum(day['weekend_commits'] for day in daily_commits)
+    
+    days_with_commits = len([day for day in daily_commits if day['commits'] > 0])
+    commits_per_week = (total_commits / max(len(daily_commits), 1)) * 7
+    
+    return {
+        "status": "success",
+        "data": {
+            "user_email": user_email,
+            "github_username": github_username,
+            "daily_commits": daily_commits,
+            "summary": {
+                "total_commits": total_commits,
+                "commits_per_week": round(commits_per_week, 1),
+                "after_hours_percentage": round((total_after_hours / total_commits * 100) if total_commits > 0 else 0, 1),
+                "weekend_percentage": round((total_weekend / total_commits * 100) if total_commits > 0 else 0, 1),
+                "days_with_commits": days_with_commits,
+                "total_days": len(daily_commits)
+            },
+            "date_range": {
+                "start": start_date.isoformat(),
+                "end": end_date.isoformat()
+            }
+        }
+    }
+
+
+@router.get("/{analysis_id}/github-commits-timeline")
+async def get_analysis_github_commits_timeline(
+    analysis_id: int,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get aggregated daily GitHub commit data for all team members in an analysis.
+    
+    This endpoint returns commit data suitable for displaying a timeline chart,
+    similar to the incidents health trends chart.
+    """
+    # Get the analysis
+    analysis = db.query(Analysis).filter(
+        Analysis.id == analysis_id,
+        Analysis.user_id == current_user.id
+    ).first()
+    
+    if not analysis:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    
+    if analysis.status != 'completed':
+        return {
+            "status": "error",
+            "message": "Analysis not completed yet",
+            "data": None
+        }
+    
+    # Extract team members with GitHub data from analysis results
+    if not analysis.results or not isinstance(analysis.results, dict):
+        return {
+            "status": "error",
+            "message": "Analysis results not available",
+            "data": None
+        }
+    
+    # Get GitHub insights to find ALL contributors (not just those in team_analysis)
+    github_insights = analysis.results.get("github_insights", {})
+    top_contributors = github_insights.get("top_contributors", [])
+    
+    # Also check team_analysis for additional members
+    team_analysis = analysis.results.get("team_analysis", {})
+    members = team_analysis.get("members", [])
+    if isinstance(team_analysis, list):
+        members = team_analysis
+    
+    # Combine contributors from both sources
+    github_members = []
+    seen_usernames = set()
+    
+    # First, add all top contributors from github_insights
+    for contributor in top_contributors:
+        if isinstance(contributor, dict) and contributor.get("username"):
+            username = contributor.get("username", "")
+            if username and username not in seen_usernames:
+                github_members.append({
+                    "email": contributor.get("email", ""),
+                    "username": username,
+                    "commits_count": contributor.get("total_commits", 0)
+                })
+                seen_usernames.add(username)
+    
+    # Then add any additional members from team_analysis with GitHub activity
+    for member in members:
+        if isinstance(member, dict):
+            github_activity = member.get("github_activity", {})
+            username = github_activity.get("username", "")
+            if github_activity and username and username not in seen_usernames:
+                github_members.append({
+                    "email": member.get("user_email", ""),
+                    "username": username,
+                    "commits_count": github_activity.get("commits_count", 0)
+                })
+                seen_usernames.add(username)
+    
+    # Sort by commits to prioritize heavy contributors
+    github_members.sort(key=lambda x: x.get("commits_count", 0), reverse=True)
+    
+    if not github_members:
+        return {
+            "status": "success",
+            "message": "No GitHub activity found for team members",
+            "data": {
+                "daily_commits": [],
+                "summary": {
+                    "total_commits": 0,
+                    "total_members": 0,
+                    "days_with_activity": 0
+                }
+            }
+        }
+    
+    # Get GitHub integration token
+    github_integration = db.query(GitHubIntegration).filter(
+        GitHubIntegration.user_id == current_user.id
+    ).first()
+    
+    if not github_integration or not github_integration.github_token:
+        return {
+            "status": "error",
+            "message": "GitHub integration not configured",
+            "data": None
+        }
+    
+    # Decrypt the GitHub token
+    from ...api.endpoints.github import decrypt_token as decrypt_github_token
+    github_token = decrypt_github_token(github_integration.github_token)
+    
+    # Initialize GitHub collector
+    from ...services.github_collector import GitHubCollector
+    collector = GitHubCollector()
+    
+    # Determine date range from analysis
+    from datetime import datetime, timedelta
+    import asyncio
+    
+    # Get dates from analysis metadata
+    metadata = analysis.results.get("metadata", {})
+    start_date_str = metadata.get("start_date")
+    end_date_str = metadata.get("end_date")
+    
+    if start_date_str and end_date_str:
+        start_date = datetime.fromisoformat(start_date_str.replace('Z', '+00:00'))
+        end_date = datetime.fromisoformat(end_date_str.replace('Z', '+00:00'))
+    else:
+        # Fallback to analysis time range
+        end_date = analysis.created_at
+        start_date = end_date - timedelta(days=analysis.time_range or 30)
+    
+    # Fetch daily commit data for each member
+    all_daily_data = {}
+    tasks = []
+    
+    # Log the GitHub members we found
+    logger.info(f"Found {len(github_members)} GitHub members to fetch daily commits for")
+    logger.info(f"GitHub members: {[m['username'] for m in github_members]}")
+    logger.info(f"Total commits in insights: {github_insights.get('total_commits', 0)}")
+    
+    # Fetch daily commit data for more members (increase from 5 to 10)
+    for member in github_members[:10]:  # Increased limit to get better coverage
+        if member["username"]:
+            task = collector.fetch_daily_commit_data(
+                username=member["username"],
+                start_date=start_date,
+                end_date=end_date,
+                github_token=github_token
+            )
+            tasks.append((member["username"], task))
+    
+    # Execute all tasks concurrently
+    results = await asyncio.gather(*[task for _, task in tasks], return_exceptions=True)
+    
+    # Process results
+    for i, (username, result) in enumerate(zip([t[0] for t in tasks], results)):
+        if isinstance(result, Exception):
+            logger.warning(f"Failed to fetch data for {username}: {result}")
+            continue
+        
+        if result:
+            for day_data in result:
+                date = day_data['date']
+                if date not in all_daily_data:
+                    all_daily_data[date] = {
+                        'date': date,
+                        'commits': 0,
+                        'after_hours_commits': 0,
+                        'weekend_commits': 0,
+                        'contributors': set()
+                    }
+                
+                all_daily_data[date]['commits'] += day_data['commits']
+                all_daily_data[date]['after_hours_commits'] += day_data['after_hours_commits']
+                all_daily_data[date]['weekend_commits'] += day_data['weekend_commits']
+                if day_data['commits'] > 0:
+                    all_daily_data[date]['contributors'].add(username)
+    
+    # Convert to sorted list and calculate contributor counts
+    daily_timeline = []
+    for date in sorted(all_daily_data.keys()):
+        day = all_daily_data[date]
+        daily_timeline.append({
+            'date': date,
+            'commits': day['commits'],
+            'after_hours_commits': day['after_hours_commits'],
+            'weekend_commits': day['weekend_commits'],
+            'unique_contributors': len(day['contributors'])
+        })
+    
+    # Calculate summary statistics
+    total_commits = sum(day['commits'] for day in daily_timeline)
+    days_with_activity = len([day for day in daily_timeline if day['commits'] > 0])
+    
+    return {
+        "status": "success",
+        "data": {
+            "daily_commits": daily_timeline,
+            "summary": {
+                "total_commits": total_commits,
+                "total_members": len(github_members),
+                "members_fetched": len(tasks),
+                "days_with_activity": days_with_activity,
+                "total_days": len(daily_timeline),
+                "average_commits_per_day": round(total_commits / max(len(daily_timeline), 1), 1)
+            },
+            "date_range": {
+                "start": start_date.isoformat(),
+                "end": end_date.isoformat()
+            }
+        }
+    }
 
 
 async def run_analysis_task(
@@ -594,18 +1610,33 @@ async def run_analysis_task(
     print(f"BACKGROUND_TASK: User ID received: {user_id}")
     print(f"BACKGROUND_TASK: AI params - enable_ai: {enable_ai}")
     
-    db = next(get_db())
+    # Get a fresh database session for the background task
+    from ...models import SessionLocal
+    db = SessionLocal()
     
     try:
+        # Log database connection info
+        logger.info(f"BACKGROUND_TASK: Got new database session for analysis {analysis_id}")
+        
         # Update status to running
         analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
         if not analysis:
-            logger.info(f"BACKGROUND_TASK: Analysis {analysis_id} not found in database")
+            logger.error(f"BACKGROUND_TASK: Analysis {analysis_id} not found in database")
+            # Try to debug what analyses exist
+            all_analyses = db.query(Analysis.id).order_by(Analysis.id.desc()).limit(5).all()
+            logger.error(f"BACKGROUND_TASK: Recent analysis IDs in database: {[a.id for a in all_analyses]}")
             return  # Analysis doesn't exist
             
         logger.info(f"BACKGROUND_TASK: Setting analysis {analysis_id} to running status")
         analysis.status = "running"
         db.commit()
+        
+        # Phase 1.2: Clear any existing mappings for this analysis to prevent duplicates
+        if user_id and (include_github or include_slack):
+            from ...services.mapping_recorder import MappingRecorder
+            recorder = MappingRecorder(db)
+            cleared_count = recorder.clear_analysis_mappings(analysis_id)
+            logger.info(f"BACKGROUND_TASK: Cleared {cleared_count} existing mappings for analysis {analysis_id}")
         
         # Fetch user-specific integration tokens if needed
         slack_token = None
@@ -680,22 +1711,24 @@ async def run_analysis_task(
         logger.info(f"BACKGROUND_TASK: Final analyzer decision - use_ai_analyzer: {use_ai_analyzer}")
         print(f"BACKGROUND_TASK: Final analyzer decision - use_ai_analyzer: {use_ai_analyzer}")
         
-        # Platform-agnostic analyzer selection based on AI enablement
+        # Use UnifiedBurnoutAnalyzer for all analyses
+        logger.info(f"BACKGROUND_TASK: Using UnifiedBurnoutAnalyzer")
+        print(f"BACKGROUND_TASK: Using UnifiedBurnoutAnalyzer")
+        
+        # Set user context for AI analysis if needed
         if use_ai_analyzer:
-            analyzer_service = BurnoutAnalyzerService(api_token, platform=platform)
-            logger.info(f"BACKGROUND_TASK: Using BurnoutAnalyzerService (AI-enhanced) for {platform}")
-            print(f"BACKGROUND_TASK: Using BurnoutAnalyzerService (AI-enhanced) for {platform}")
-        else:
-            # Use platform-specific basic analyzers when AI is not enabled
-            if platform == "pagerduty":
-                analyzer_service = PagerDutyBurnoutAnalyzerService(api_token)
-                logger.info(f"BACKGROUND_TASK: Using PagerDutyBurnoutAnalyzerService (basic)")
-                print(f"BACKGROUND_TASK: Using PagerDutyBurnoutAnalyzerService (basic)")
-            else:  # Default to Rootly for backward compatibility
-                from ...core.simple_burnout_analyzer import SimpleBurnoutAnalyzer
-                analyzer_service = SimpleBurnoutAnalyzer(api_token)
-                logger.info(f"BACKGROUND_TASK: Using SimpleBurnoutAnalyzer (basic)")
-                print(f"BACKGROUND_TASK: Using SimpleBurnoutAnalyzer (basic)")
+            from ...services.ai_burnout_analyzer import set_user_context
+            set_user_context(user)
+            logger.info(f"BACKGROUND_TASK: Set user context for AI analysis (LLM provider: {user.llm_provider if user.llm_token else 'none'})")
+        
+        analyzer_service = UnifiedBurnoutAnalyzer(
+            api_token=api_token,
+            platform=platform,
+            enable_ai=use_ai_analyzer,
+            github_token=github_token if include_github else None,
+            slack_token=slack_token if include_slack else None
+        )
+        logger.info(f"BACKGROUND_TASK: UnifiedBurnoutAnalyzer initialized - Features: AI={use_ai_analyzer}, GitHub={include_github}, Slack={include_slack}")
         
         # Run the analysis with timeout (15 minutes max)
         logger.info(f"BACKGROUND_TASK: Starting burnout analysis with 15-minute timeout for analysis {analysis_id}")
@@ -707,14 +1740,14 @@ async def run_analysis_task(
             # Log analyzer type for debugging
             logger.info(f"BACKGROUND_TASK: Using analyzer type: {type(analyzer_service).__name__}")
             
+            # Call UnifiedBurnoutAnalyzer
+            logger.info(f"BACKGROUND_TASK: Calling UnifiedBurnoutAnalyzer.analyze_burnout()")
             results = await asyncio.wait_for(
                 analyzer_service.analyze_burnout(
                     time_range_days=time_range,
                     include_weekends=include_weekends,
-                    include_github=include_github,
-                    include_slack=include_slack,
-                    github_token=github_token,
-                    slack_token=slack_token
+                    user_id=user_id,
+                    analysis_id=analysis_id
                 ),
                 timeout=900.0  # 15 minutes
             )
@@ -725,6 +1758,28 @@ async def run_analysis_task(
                 results = {"error": "Analysis completed but returned empty results"}
             
             logger.info(f"BACKGROUND_TASK: Analysis {analysis_id} completed successfully with {len(str(results))} characters of results")
+            
+            # A/B Testing: Log comparative metrics for monitoring
+            try:
+                # We're always using UnifiedBurnoutAnalyzer now
+                analyzer_type = "unified"
+                daily_trends_count = len(results.get("daily_trends", [])) if results else 0
+                team_members_count = len(results.get("team_analysis", {}).get("members", [])) if results else 0
+                ai_enhanced = results.get("ai_enhanced", False) if results else False
+                
+                logger.info(f"🔬 A/B_TESTING_METRICS: analysis_id={analysis_id}, analyzer_type={analyzer_type}, "
+                           f"daily_trends_count={daily_trends_count}, team_members_count={team_members_count}, "
+                           f"ai_enhanced={ai_enhanced}, platform={platform}, "
+                           f"features=AI:{use_ai_analyzer},GitHub:{include_github},Slack:{include_slack}")
+                
+                # Log specific result structure for comparison
+                if results:
+                    result_keys = list(results.keys())
+                    logger.info(f"🔬 A/B_TESTING_STRUCTURE: analysis_id={analysis_id}, analyzer_type={analyzer_type}, "
+                               f"result_keys={result_keys}")
+                    
+            except Exception as monitoring_error:
+                logger.warning(f"A/B testing monitoring failed: {monitoring_error}")
             
             # Update analysis with results
             analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()

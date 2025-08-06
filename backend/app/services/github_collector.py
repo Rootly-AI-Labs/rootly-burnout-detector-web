@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Dict, List, Optional
 import requests
 import asyncio
+import os
+from sqlalchemy import create_engine, text
 # from sqlalchemy.orm import Session
 # from ..models import GitHubIntegration
 
@@ -32,8 +34,8 @@ class GitHubCollector:
         # GitHub organizations to search
         self.organizations = ["Rootly-AI-Labs", "rootlyhq"]
         
-        # Manual email mappings (from original config, to handle cases where GitHub email != Rootly email)
-        self.manual_email_mappings = {
+        # Predefined email mappings (from original config, to handle cases where GitHub email != Rootly email)
+        self.predefined_email_mappings = {
             "spencer.cheng@rootly.com": "spencerhcheng",
             "jasmeet.singh@rootly.com": "jasmeetluthra", 
             "sylvain@rootly.com": "sylvainkalache",
@@ -52,32 +54,51 @@ class GitHubCollector:
         # Cache for email mapping
         self._email_mapping_cache = None
         
-    async def _correlate_email_to_github(self, email: str, token: str) -> Optional[str]:
+    async def _correlate_email_to_github(self, email: str, token: str, user_id: Optional[int] = None, full_name: Optional[str] = None) -> Optional[str]:
         """
         Correlate an email address to a GitHub username using multiple strategies.
         
-        This mimics the logic from the original burnout detector:
-        1. Check manual mappings first
-        2. Check discovered email mappings from organization members
+        This checks in order:
+        1. Manual mappings from user_mappings table (highest priority)
+        2. Predefined mappings (hardcoded)
+        3. Enhanced matching algorithm with multiple strategies
+        4. Legacy discovered email mappings from organization members
         """
-        logger.info(f"GitHub correlation attempt for {email}, token={'present' if token else 'missing'}")
+        logger.info(f"GitHub correlation attempt for {email}, token={'present' if token else 'missing'}, user_id={user_id}")
         
         if not token:
             logger.warning("No GitHub token provided for correlation")
             return None
             
         try:
-            # First check manual mappings
-            logger.info(f"Checking manual mappings for {email}. Available mappings: {list(self.manual_email_mappings.keys())}")
-            logger.info(f"Manual mappings dict: {self.manual_email_mappings}")
-            username = self.manual_email_mappings.get(email)
+            # FIRST: Check manual mappings from user_mappings table (highest priority)
+            if user_id:
+                manual_username = await self._check_manual_mappings(email, user_id)
+                if manual_username:
+                    logger.info(f"Found GitHub correlation via MANUAL mapping: {email} -> {manual_username}")
+                    return manual_username
+            
+            # SECOND: Check predefined mappings (hardcoded)
+            logger.info(f"Checking predefined mappings for {email}. Available mappings: {list(self.predefined_email_mappings.keys())}")
+            username = self.predefined_email_mappings.get(email)
             if username:
-                logger.info(f"Found GitHub correlation via manual mapping: {email} -> {username}")
+                logger.info(f"Found GitHub correlation via predefined mapping: {email} -> {username}")
                 return username
             else:
-                logger.warning(f"No manual mapping found for {email}")
+                logger.warning(f"No predefined mapping found for {email}")
             
-            # Build email mapping if not cached
+            # THIRD: Use enhanced matching algorithm
+            try:
+                from .enhanced_github_matcher import EnhancedGitHubMatcher
+                matcher = EnhancedGitHubMatcher(token, self.organizations)
+                username = await matcher.match_email_to_github(email, full_name)
+                if username:
+                    logger.info(f"Found GitHub correlation via ENHANCED matching: {email} -> {username}")
+                    return username
+            except Exception as e:
+                logger.warning(f"Enhanced matcher failed, falling back to legacy: {e}")
+            
+            # FOURTH: Legacy approach - build email mapping if not cached
             if self._email_mapping_cache is None:
                 logger.info("Building email mapping cache from GitHub API")
                 self._email_mapping_cache = await self._build_email_mapping(token)
@@ -95,6 +116,59 @@ class GitHubCollector:
             
         except Exception as e:
             logger.error(f"Error correlating email {email} to GitHub: {e}")
+            return None
+    
+    async def _check_manual_mappings(self, email: str, user_id: int) -> Optional[str]:
+        """
+        Check user_mappings table for manual GitHub mappings.
+        
+        Args:
+            email: The email address to look up
+            user_id: The user ID who owns the mappings
+            
+        Returns:
+            GitHub username if found, None otherwise
+        """
+        try:
+            database_url = os.getenv('DATABASE_URL')
+            if not database_url:
+                logger.warning("DATABASE_URL not set, cannot check manual mappings")
+                return None
+            
+            engine = create_engine(database_url)
+            conn = engine.connect()
+            
+            # Query for manual mapping
+            query = """
+                SELECT target_identifier
+                FROM user_mappings
+                WHERE user_id = :user_id
+                  AND source_platform = 'rootly'
+                  AND source_identifier = :email
+                  AND target_platform = 'github'
+                  AND target_identifier IS NOT NULL
+                  AND target_identifier != ''
+                ORDER BY created_at DESC
+                LIMIT 1
+            """
+            
+            result = conn.execute(
+                text(query),
+                {'user_id': user_id, 'email': email}
+            )
+            row = result.fetchone()
+            conn.close()
+            
+            if row:
+                username = row[0]
+                logger.info(f"Found manual GitHub mapping: {email} -> {username}")
+                return username
+            else:
+                logger.debug(f"No manual GitHub mapping found for {email}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error checking manual mappings: {e}")
             return None
     
     async def _build_email_mapping(self, token: str) -> Dict[str, str]:
@@ -165,7 +239,8 @@ class GitHubCollector:
                         emails.add(user_data['email'])
             
             # Get user's recent events to find repositories they've contributed to
-            events_url = f"https://api.github.com/users/{username}/events?per_page=100"
+            # Reduced from 100 to 30 to minimize API calls
+            events_url = f"https://api.github.com/users/{username}/events?per_page=30"
             async with session.get(events_url, headers=headers) as resp:
                 if resp.status == 200:
                     events_data = await resp.json()
@@ -178,9 +253,11 @@ class GitHubCollector:
                             repos_to_check.add(repo_name)
                     
                     # For each repo, check recent commits by this user
-                    for repo_name in list(repos_to_check):  # No limit on repos
+                    # Limit to 3 repos to reduce API calls
+                    for repo_name in list(repos_to_check)[:3]:
                         try:
-                            commits_url = f"https://api.github.com/repos/{repo_name}/commits?author={username}&per_page=100"
+                            # Reduced from 100 to 10 commits per repo
+                            commits_url = f"https://api.github.com/repos/{repo_name}/commits?author={username}&per_page=10"
                             async with session.get(commits_url, headers=headers) as resp:
                                 if resp.status == 200:
                                     commits_data = await resp.json()
@@ -197,7 +274,7 @@ class GitHubCollector:
         return emails
         
     async def _fetch_real_github_data(self, username: str, email: str, start_date: datetime, end_date: datetime, token: str) -> Dict:
-        """Fetch real GitHub data using the GitHub API."""
+        """Fetch real GitHub data using the GitHub API with enterprise resilience."""
         
         headers = {
             'Authorization': f'token {token}',
@@ -212,33 +289,51 @@ class GitHubCollector:
         user_url = f"https://api.github.com/users/{username}"
         
         try:
+            # Phase 2.3: Use API manager for resilient GitHub API calls
+            from .github_api_manager import github_api_manager
+            
+            # Use search API to get counts only (1 call instead of paginating)
             # Get commits across all repos
-            commits_url = f"https://api.github.com/search/commits?q=author:{username}+author-date:{start_date.strftime('%Y-%m-%d')}..{end_date.strftime('%Y-%m-%d')}"
+            commits_url = f"https://api.github.com/search/commits?q=author:{username}+author-date:{start_date.strftime('%Y-%m-%d')}..{end_date.strftime('%Y-%m-%d')}&per_page=1"
             
-            # Get pull requests
-            prs_url = f"https://api.github.com/search/issues?q=author:{username}+type:pr+created:{start_date.strftime('%Y-%m-%d')}..{end_date.strftime('%Y-%m-%d')}"
+            # Get pull requests count
+            prs_url = f"https://api.github.com/search/issues?q=author:{username}+type:pr+created:{start_date.strftime('%Y-%m-%d')}..{end_date.strftime('%Y-%m-%d')}&per_page=1"
             
-            # Make API calls
-            async with asyncio.timeout(30):  # 30 second timeout
+            # Make resilient API calls with rate limiting and circuit breaker
+            async def fetch_commits():
                 import aiohttp
                 async with aiohttp.ClientSession() as session:
-                    # Fetch commits
                     async with session.get(commits_url, headers=headers) as resp:
                         if resp.status == 200:
-                            commits_data = await resp.json()
-                            total_commits = commits_data.get('total_count', 0)
+                            return await resp.json()
+                        elif resp.status == 401:
+                            raise aiohttp.ClientError(f"GitHub API authentication failed (401) - token may be expired or invalid")
+                        elif resp.status == 403:
+                            raise aiohttp.ClientError(f"GitHub API forbidden (403) - token needs 'repo' permission for private repos")
                         else:
-                            logger.warning(f"GitHub API error for commits: {resp.status}")
-                            total_commits = 0
-                    
-                    # Fetch PRs
+                            raise aiohttp.ClientError(f"GitHub API error for commits: {resp.status}")
+            
+            async def fetch_prs():
+                import aiohttp
+                async with aiohttp.ClientSession() as session:
                     async with session.get(prs_url, headers=headers) as resp:
                         if resp.status == 200:
-                            prs_data = await resp.json()
-                            total_prs = prs_data.get('total_count', 0)
+                            return await resp.json()
+                        elif resp.status == 401:
+                            raise aiohttp.ClientError(f"GitHub API authentication failed (401) - token may be expired or invalid")
+                        elif resp.status == 403:
+                            raise aiohttp.ClientError(f"GitHub API forbidden (403) - token needs 'repo' permission for private repos") 
                         else:
-                            logger.warning(f"GitHub API error for PRs: {resp.status}")
-                            total_prs = 0
+                            raise aiohttp.ClientError(f"GitHub API error for PRs: {resp.status}")
+            
+            # Execute with enterprise resilience patterns
+            commits_data = await github_api_manager.safe_api_call(fetch_commits, max_retries=3)
+            total_commits = commits_data.get('total_count', 0) if commits_data else 0
+            
+            prs_data = await github_api_manager.safe_api_call(fetch_prs, max_retries=3)
+            total_prs = prs_data.get('total_count', 0) if prs_data else 0
+            
+            logger.info(f"📊 GitHub API calls completed - Commits: {total_commits}, PRs: {total_prs}")
             
             # For now, estimate other metrics based on commits/PRs
             # In a full implementation, we'd make additional API calls
@@ -296,10 +391,142 @@ class GitHubCollector:
             
         except Exception as e:
             logger.error(f"Error fetching real GitHub data for {username}: {e}")
-            # Fall back to mock data
-            return self._generate_mock_github_data(username, email, start_date, end_date)
+            # Don't fall back to mock data - return None to indicate failure
+            return None
         
-    async def collect_github_data_for_user(self, user_email: str, days: int = 30, github_token: str = None) -> Optional[Dict]:
+    async def fetch_daily_commit_data(self, username: str, start_date: datetime, end_date: datetime, github_token: str) -> Optional[List[Dict]]:
+        """
+        Fetch daily commit data for a GitHub user over a specified period.
+        
+        Args:
+            username: GitHub username
+            start_date: Start date for the analysis period
+            end_date: End date for the analysis period
+            github_token: GitHub API token
+            
+        Returns:
+            List of daily commit data or None if error
+        """
+        headers = {
+            'Authorization': f'token {github_token}',
+            'Accept': 'application/vnd.github.v3+json',
+            'User-Agent': 'Rootly-Burnout-Detector'
+        }
+        
+        try:
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                # Check rate limit before starting
+                rate_check_url = "https://api.github.com/rate_limit"
+                async with session.get(rate_check_url, headers=headers) as resp:
+                    if resp.status == 200:
+                        rate_data = await resp.json()
+                        remaining = rate_data['rate']['remaining']
+                        reset_time = rate_data['rate']['reset']
+                        logger.info(f"GitHub API rate limit: {remaining} calls remaining, resets at {datetime.fromtimestamp(reset_time)}")
+                        
+                        if remaining < 50:
+                            logger.warning(f"Low GitHub API rate limit: only {remaining} calls remaining!")
+                            if remaining < 10:
+                                logger.error("Critical GitHub API rate limit! Aborting to prevent hitting limit.")
+                                return None
+                
+                # Initialize daily data structure
+                daily_commits = {}
+                current_date = start_date
+                
+                while current_date <= end_date:
+                    date_str = current_date.strftime('%Y-%m-%d')
+                    daily_commits[date_str] = {
+                        'date': date_str,
+                        'commits': 0,
+                        'after_hours_commits': 0,
+                        'weekend_commits': 0
+                    }
+                    current_date += timedelta(days=1)
+                
+                # Fetch commits using search API
+                search_url = f"https://api.github.com/search/commits"
+                query = f"author:{username} author-date:{start_date.strftime('%Y-%m-%d')}..{end_date.strftime('%Y-%m-%d')}"
+                
+                page = 1
+                per_page = 100
+                total_fetched = 0
+                
+                while True:
+                    params = {
+                        'q': query,
+                        'sort': 'author-date',
+                        'order': 'asc',
+                        'page': page,
+                        'per_page': per_page
+                    }
+                    
+                    async with session.get(search_url, headers=headers, params=params) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            items = data.get('items', [])
+                            
+                            if not items:
+                                break
+                                
+                            # Process each commit
+                            for commit_item in items:
+                                commit = commit_item.get('commit', {})
+                                author = commit.get('author', {})
+                                date_str = author.get('date', '')
+                                
+                                if date_str:
+                                    # Parse commit datetime
+                                    commit_dt = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                                    commit_date = commit_dt.strftime('%Y-%m-%d')
+                                    
+                                    if commit_date in daily_commits:
+                                        daily_commits[commit_date]['commits'] += 1
+                                        
+                                        # Check if after hours (before 9am or after 5pm local time)
+                                        hour = commit_dt.hour
+                                        if hour < 9 or hour >= 17:
+                                            daily_commits[commit_date]['after_hours_commits'] += 1
+                                            
+                                        # Check if weekend
+                                        if commit_dt.weekday() >= 5:  # Saturday = 5, Sunday = 6
+                                            daily_commits[commit_date]['weekend_commits'] += 1
+                            
+                            total_fetched += len(items)
+                            
+                            # Check if we've fetched all results
+                            if total_fetched >= data.get('total_count', 0):
+                                break
+                                
+                            page += 1
+                            
+                            # GitHub search API has a limit of 1000 results
+                            if total_fetched >= 1000:
+                                logger.warning(f"Reached GitHub search API limit of 1000 results for {username}")
+                                break
+                                
+                        elif resp.status == 401:
+                            logger.error("GitHub API authentication failed")
+                            return None
+                        elif resp.status == 403:
+                            logger.error("GitHub API rate limit exceeded or forbidden")
+                            return None
+                        else:
+                            logger.error(f"GitHub API error: {resp.status}")
+                            return None
+                
+                # Convert to list sorted by date
+                daily_data = sorted(daily_commits.values(), key=lambda x: x['date'])
+                
+                logger.info(f"Fetched {total_fetched} commits for {username} from {start_date} to {end_date}")
+                return daily_data
+                
+        except Exception as e:
+            logger.error(f"Error fetching daily commit data for {username}: {e}")
+            return None
+    
+    async def collect_github_data_for_user(self, user_email: str, days: int = 30, github_token: str = None, user_id: Optional[int] = None, full_name: Optional[str] = None) -> Optional[Dict]:
         """
         Collect GitHub activity data for a single user using email correlation.
         
@@ -307,12 +534,13 @@ class GitHubCollector:
             user_email: User's email to correlate with GitHub
             days: Number of days to analyze
             github_token: GitHub API token for authentication
+            user_id: User ID for checking manual mappings
             
         Returns:
             GitHub activity data or None if no correlation found
         """
         # Use email-based correlation to find GitHub username
-        github_username = await self._correlate_email_to_github(user_email, github_token)
+        github_username = await self._correlate_email_to_github(user_email, github_token, user_id, full_name)
         
         if not github_username:
             logger.warning(f"No GitHub username found for email {user_email}")
@@ -329,9 +557,9 @@ class GitHubCollector:
             logger.info(f"Using real GitHub API for {github_username} with token: {github_token[:10]}...")
             return await self._fetch_real_github_data(github_username, user_email, start_date, end_date, github_token)
         else:
-            # Fall back to mock data for testing
-            logger.warning(f"No GitHub token, using mock data for {github_username}")
-            return self._generate_mock_github_data(github_username, user_email, start_date, end_date)
+            # No GitHub token available
+            logger.warning(f"No GitHub token available for {github_username}")
+            return None
     
     def _generate_mock_github_data(self, username: str, email: str, start_date: datetime, end_date: datetime) -> Dict:
         """Generate realistic mock GitHub data for testing."""
@@ -423,7 +651,7 @@ class GitHubCollector:
         self.last_request_time = time.time()
 
 
-async def collect_team_github_data(team_emails: List[str], days: int = 30, github_token: str = None) -> Dict[str, Dict]:
+async def collect_team_github_data(team_emails: List[str], days: int = 30, github_token: str = None, user_id: Optional[int] = None) -> Dict[str, Dict]:
     """
     Collect GitHub data for all team members.
     
@@ -431,6 +659,7 @@ async def collect_team_github_data(team_emails: List[str], days: int = 30, githu
         team_emails: List of team member emails
         days: Number of days to analyze
         github_token: GitHub API token for real data collection
+        user_id: User ID for checking manual mappings
         
     Returns:
         Dict mapping email -> github_activity_data
@@ -440,7 +669,7 @@ async def collect_team_github_data(team_emails: List[str], days: int = 30, githu
     
     for email in team_emails:
         try:
-            user_data = await collector.collect_github_data_for_user(email, days, github_token)
+            user_data = await collector.collect_github_data_for_user(email, days, github_token, user_id)
             if user_data:
                 github_data[email] = user_data
         except Exception as e:

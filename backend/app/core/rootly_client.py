@@ -46,9 +46,9 @@ class RootlyAPIClient:
                     elif response.status_code == 401:
                         permissions["users"]["error"] = "Unauthorized - check API token"
                     elif response.status_code == 403:
-                        permissions["users"]["error"] = "Forbidden - insufficient permissions"
+                        permissions["users"]["error"] = "Token needs 'users:read' permission"
                     elif response.status_code == 404:
-                        permissions["users"]["error"] = "Endpoint not found"
+                        permissions["users"]["error"] = "API token doesn't have access to user data"
                     else:
                         permissions["users"]["error"] = f"HTTP {response.status_code}"
                         
@@ -69,9 +69,9 @@ class RootlyAPIClient:
                     elif response.status_code == 401:
                         permissions["incidents"]["error"] = "Unauthorized - check API token"
                     elif response.status_code == 403:
-                        permissions["incidents"]["error"] = "Forbidden - insufficient permissions"
+                        permissions["incidents"]["error"] = "Token needs 'incidents:read' permission"
                     elif response.status_code == 404:
-                        permissions["incidents"]["error"] = "Endpoint not found"
+                        permissions["incidents"]["error"] = "API token doesn't have access to incident data"
                     else:
                         permissions["incidents"]["error"] = f"HTTP {response.status_code}"
                         
@@ -293,7 +293,11 @@ class RootlyAPIClient:
                     page_start_time = datetime.now()
                     
                     # Use adaptive page size based on time range to optimize performance
-                    if days_back >= 30:
+                    if days_back >= 90:
+                        # Maximum page size for very long ranges
+                        actual_page_size = min(page_size, 100)
+                        logger.info(f"🔍 INCIDENT OPTIMIZATION: Using maximum page size ({actual_page_size}) for {days_back}-day analysis")
+                    elif days_back >= 30:
                         # Larger pages for longer ranges to reduce total API calls
                         actual_page_size = min(page_size, 50)
                         logger.info(f"🔍 INCIDENT OPTIMIZATION: Using larger page size ({actual_page_size}) for {days_back}-day analysis")
@@ -431,7 +435,8 @@ class RootlyAPIClient:
                 14: 3000,  # 14-day: up to 3000 incidents  
                 30: 5000,  # 30-day: up to 5000 incidents (reduced from 10000)
                 60: 7000,  # 60-day: up to 7000 incidents
-                90: 10000  # 90-day: up to 10000 incidents
+                90: 10000, # 90-day: up to 10000 incidents
+                180: 15000 # 180-day (6 months): up to 15000 incidents
             }
             
             # Find appropriate limit for the time range
@@ -484,6 +489,56 @@ class RootlyAPIClient:
             elif days_back == 30:
                 logger.info(f"🔍 COMPARISON: 30-day analysis completed - compare performance to 7-day baseline")
             
+            # Count incidents by severity
+            severity_counts = {
+                "sev0_count": 0,  # Critical/Emergency
+                "sev1_count": 0,
+                "sev2_count": 0,
+                "sev3_count": 0,
+                "sev4_count": 0
+            }
+            
+            # Process incidents to count severities
+            for incident in incidents:
+                try:
+                    # Extract severity from incident attributes
+                    attrs = incident.get("attributes", {})
+                    severity_info = attrs.get("severity", {})
+                    severity_name = "sev4"  # Default
+                    
+                    if isinstance(severity_info, dict) and "data" in severity_info:
+                        severity_data = severity_info.get("data", {})
+                        if isinstance(severity_data, dict) and "attributes" in severity_data:
+                            severity_attrs = severity_data["attributes"]
+                            # Look for severity name or level
+                            severity_name = severity_attrs.get("name", "sev4").lower()
+                            if not severity_name.startswith("sev"):
+                                # Map common severity names to sev levels
+                                severity_map = {
+                                    "critical": "sev1",
+                                    "high": "sev2", 
+                                    "medium": "sev3",
+                                    "low": "sev4"
+                                }
+                                severity_name = severity_map.get(severity_name.lower(), "sev4")
+                    
+                    # Increment the appropriate counter
+                    if severity_name == "sev0" or severity_name == "emergency":
+                        severity_counts["sev0_count"] += 1
+                    elif severity_name == "sev1":
+                        severity_counts["sev1_count"] += 1
+                    elif severity_name == "sev2":
+                        severity_counts["sev2_count"] += 1
+                    elif severity_name == "sev3":
+                        severity_counts["sev3_count"] += 1
+                    else:
+                        severity_counts["sev4_count"] += 1
+                        
+                except Exception as e:
+                    logger.debug(f"Error counting severity for incident: {e}")
+                    # Default to sev4 on error
+                    severity_counts["sev4_count"] += 1
+            
             # Process and return data
             processed_data = {
                 "users": users,
@@ -493,6 +548,7 @@ class RootlyAPIClient:
                     "days_analyzed": days_back,
                     "total_users": len(users),
                     "total_incidents": len(incidents),
+                    "severity_breakdown": severity_counts,
                     "date_range": {
                         "start": (datetime.now() - timedelta(days=days_back)).isoformat(),
                         "end": datetime.now().isoformat()
@@ -522,6 +578,13 @@ class RootlyAPIClient:
                     "days_analyzed": days_back,
                     "total_users": 0,
                     "total_incidents": 0,
+                    "severity_breakdown": {
+                        "sev0_count": 0,
+                        "sev1_count": 0,
+                        "sev2_count": 0,
+                        "sev3_count": 0,
+                        "sev4_count": 0
+                    },
                     "error": str(e),
                     "date_range": {
                         "start": (datetime.now() - timedelta(days=days_back)).isoformat(),

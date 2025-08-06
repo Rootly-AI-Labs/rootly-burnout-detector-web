@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "check": "npm run type-check && npm run lint"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.1.1",
@@ -28,6 +29,7 @@
     "autoprefixer": "^10.0.1",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.0.0",
+    "date-fns": "^4.1.0",
     "lucide-react": "^0.294.0",
     "next": "14.0.0",
     "next-themes": "^0.4.6",
@@ -45,6 +47,7 @@
   },
   "devDependencies": {
     "eslint": "^8",
-    "eslint-config-next": "14.0.0"
+    "eslint-config-next": "14.0.0",
+    "husky": "^9.1.7"
   }
 }

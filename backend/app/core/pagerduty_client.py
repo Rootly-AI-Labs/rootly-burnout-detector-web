@@ -26,33 +26,49 @@ class PagerDutyAPIClient:
     async def test_connection(self) -> Dict[str, Any]:
         """Test the PagerDuty API connection and get account info."""
         try:
-            # Get current user to verify token
+            # Test connection by fetching users (works with both user and account tokens)
             async with aiohttp.ClientSession() as session:
                 async with session.get(
-                    f"{self.base_url}/users/me",
-                    headers=self.headers
+                    f"{self.base_url}/users",
+                    headers=self.headers,
+                    params={"limit": 1}
                 ) as response:
                     if response.status != 200:
-                        return {"valid": False, "error": f"HTTP {response.status}"}
+                        error_text = await response.text()
+                        return {"valid": False, "error": f"HTTP {response.status}: {error_text}"}
                     
-                    user_data = await response.json()
+                    users_data = await response.json()
                     
-                # Get organization info from the current user's HTML URL
-                # This contains the actual PagerDuty organization subdomain
+                # Try to get current user info if it's a user token
+                current_user = "Account Token"
+                try:
+                    async with session.get(
+                        f"{self.base_url}/users/me",
+                        headers=self.headers
+                    ) as me_response:
+                        if me_response.status == 200:
+                            user_data = await me_response.json()
+                            current_user = user_data.get("user", {}).get("name", "Unknown User")
+                except:
+                    # Account token - can't get current user
+                    pass
+                
+                # Get organization info from first user's HTML URL if available
                 org_name = "PagerDuty Account"
-                html_url = user_data.get("user", {}).get("html_url", "")
-                if html_url and "pagerduty.com" in html_url:
-                    try:
-                        # Extract subdomain from URL like https://orgname.pagerduty.com/...
-                        subdomain = html_url.split("//")[1].split(".")[0]
-                        if subdomain and subdomain != "www":
-                            org_name = subdomain.title()
-                    except (IndexError, AttributeError):
-                        # Fallback to default name if URL parsing fails
-                        pass
+                users = users_data.get("users", [])
+                if users:
+                    html_url = users[0].get("html_url", "")
+                    if html_url and "pagerduty.com" in html_url:
+                        try:
+                            # Extract subdomain from URL like https://orgname.pagerduty.com/...
+                            subdomain = html_url.split("//")[1].split(".")[0]
+                            if subdomain and subdomain != "www":
+                                org_name = subdomain.title()
+                        except (IndexError, AttributeError):
+                            # Fallback to default name if URL parsing fails
+                            pass
                 
                 # Get user and service counts
-                users = await self.get_users(limit=1)
                 services = await self.get_services(limit=1)
                 
                 # Count total users and services
@@ -65,7 +81,7 @@ class PagerDutyAPIClient:
                         "organization_name": org_name,
                         "total_users": total_users,
                         "total_services": total_services,
-                        "current_user": user_data.get("user", {}).get("name", "Unknown")
+                        "current_user": current_user
                     }
                 }
                 
@@ -156,11 +172,18 @@ class PagerDutyAPIClient:
             async with aiohttp.ClientSession() as session:
                 all_incidents = []
                 offset = 0
+                max_requests = 150  # Circuit breaker - max 150 requests (15000 incidents at 100 per page)
+                request_count = 0
                 
-                while len(all_incidents) < limit:
+                while len(all_incidents) < limit and request_count < max_requests:
+                    logger.info(f"Fetching PagerDuty incidents: offset={offset}, collected={len(all_incidents)}/{limit}")
+                    
+                    # Add timeout to prevent hanging
+                    timeout = aiohttp.ClientTimeout(total=30)  # 30 second timeout per request
                     async with session.get(
                         f"{self.base_url}/incidents",
                         headers=self.headers,
+                        timeout=timeout,
                         params={
                             "since": since_str,
                             "until": until_str,
@@ -170,6 +193,8 @@ class PagerDutyAPIClient:
                             "statuses[]": ["triggered", "acknowledged", "resolved"]
                         }
                     ) as response:
+                        request_count += 1
+                        
                         if response.status != 200:
                             logger.error(f"Failed to fetch incidents: HTTP {response.status}")
                             break
@@ -178,17 +203,27 @@ class PagerDutyAPIClient:
                         incidents = data.get("incidents", [])
                         all_incidents.extend(incidents)
                         
+                        logger.info(f"PagerDuty: Fetched {len(incidents)} incidents in this batch")
+                        
                         # Check if we have more pages
                         if not data.get("more", False) or len(incidents) == 0:
+                            logger.info(f"PagerDuty: No more incidents to fetch")
                             break
                             
                         offset += len(incidents)
                 
+                if request_count >= max_requests:
+                    logger.warning(f"PagerDuty: Hit request limit ({max_requests}), stopping incident fetch")
+                
+                logger.info(f"PagerDuty: Completed incident fetch - total incidents: {len(all_incidents)}")
                 return all_incidents
                 
+        except asyncio.TimeoutError:
+            logger.error(f"PagerDuty incident fetch timed out after collecting {len(all_incidents) if 'all_incidents' in locals() else 0} incidents")
+            return all_incidents if 'all_incidents' in locals() else []
         except Exception as e:
             logger.error(f"Error fetching PagerDuty incidents: {e}")
-            return []
+            return all_incidents if 'all_incidents' in locals() else []
     
     async def get_services(self, limit: int = 100) -> List[Dict[str, Any]]:
         """Fetch services from PagerDuty."""
@@ -224,9 +259,28 @@ class PagerDutyAPIClient:
             end_date = datetime.now(pytz.UTC)
             start_date = end_date - timedelta(days=days_back)
             
-            # Collect users and incidents in parallel (no limits for complete data collection)
+            # Dynamic incident limits based on time range (similar to Rootly)
+            incident_limits_by_range = {
+                7: 2000,   # 7-day: up to 2000 incidents
+                14: 3000,  # 14-day: up to 3000 incidents  
+                30: 5000,  # 30-day: up to 5000 incidents
+                60: 7000,  # 60-day: up to 7000 incidents
+                90: 10000, # 90-day: up to 10000 incidents
+                180: 15000 # 180-day (6 months): up to 15000 incidents
+            }
+            
+            # Find appropriate limit for the time range
+            incident_limit = 10000  # Default fallback
+            for range_days in sorted(incident_limits_by_range.keys()):
+                if days_back <= range_days:
+                    incident_limit = incident_limits_by_range[range_days]
+                    break
+            
+            logger.info(f"📊 PagerDuty: Using incident limit of {incident_limit} for {days_back}-day analysis")
+            
+            # Collect users and incidents in parallel
             users_task = self.get_users(limit=1000)
-            incidents_task = self.get_incidents(since=start_date, until=end_date, limit=10000)
+            incidents_task = self.get_incidents(since=start_date, until=end_date, limit=incident_limit)
             
             users = await users_task
             incidents = await incidents_task
@@ -234,6 +288,55 @@ class PagerDutyAPIClient:
             # Validate data
             if not users:
                 raise Exception("No users found - check API permissions")
+            
+            # Count incidents by urgency/priority (PagerDuty equivalent of severity)
+            urgency_counts = {
+                "sev0_count": 0,  # Critical/P0 = SEV0
+                "sev1_count": 0,  # High urgency = SEV1
+                "sev2_count": 0,  # Medium urgency = SEV2  
+                "sev3_count": 0,  # Low urgency = SEV3
+                "sev4_count": 0   # Info/null = SEV4
+            }
+            
+            # Process incidents to count urgencies
+            for incident in incidents:
+                try:
+                    # PagerDuty uses urgency field (high, low)
+                    urgency = incident.get("urgency", "low").lower()
+                    
+                    # Check priority first for P0/critical classification
+                    priority = incident.get("priority")
+                    priority_name = ""
+                    if priority and isinstance(priority, dict):
+                        priority_name = priority.get("summary", "").lower()
+                    
+                    # Map PagerDuty urgency/priority to severity levels
+                    if "p0" in priority_name or "emergency" in priority_name:
+                        urgency_counts["sev0_count"] += 1
+                    elif urgency == "high":
+                        # High urgency without P0 = SEV1
+                        if "p1" in priority_name:
+                            urgency_counts["sev1_count"] += 1
+                        else:
+                            urgency_counts["sev1_count"] += 1
+                    elif urgency == "low":
+                        # Check priority for more granular classification
+                        if "p1" in priority_name or "critical" in priority_name:
+                            urgency_counts["sev1_count"] += 1  # P1 with low urgency still SEV1
+                        elif "p2" in priority_name or "high" in priority_name:
+                            urgency_counts["sev2_count"] += 1
+                        elif "p3" in priority_name or "medium" in priority_name:
+                            urgency_counts["sev3_count"] += 1
+                        else:
+                            urgency_counts["sev4_count"] += 1
+                    else:
+                        # Unknown urgency defaults to SEV4
+                        urgency_counts["sev4_count"] += 1
+                        
+                except Exception as e:
+                    logger.debug(f"Error counting urgency for incident: {e}")
+                    # Default to sev4 on error
+                    urgency_counts["sev4_count"] += 1
             
             # Normalize data to common format for burnout analysis
             normalized_data = self.normalize_to_common_format(incidents, users)
@@ -247,6 +350,7 @@ class PagerDutyAPIClient:
                     "days_analyzed": days_back,
                     "total_users": len(users),
                     "total_incidents": len(incidents),
+                    "severity_breakdown": urgency_counts,  # Use same key as Rootly for consistency
                     "date_range": {
                         "start": start_date.isoformat(),
                         "end": end_date.isoformat()
@@ -268,6 +372,13 @@ class PagerDutyAPIClient:
                     "days_analyzed": days_back,
                     "total_users": 0,
                     "total_incidents": 0,
+                    "severity_breakdown": {
+                        "sev0_count": 0,
+                        "sev1_count": 0,
+                        "sev2_count": 0,
+                        "sev3_count": 0,
+                        "sev4_count": 0
+                    },
                     "error": str(e),
                     "date_range": {
                         "start": (datetime.now() - timedelta(days=days_back)).isoformat(),

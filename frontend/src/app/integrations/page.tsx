@@ -15,6 +15,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet"
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -67,6 +74,14 @@ import {
   ExternalLink,
   TestTube,
   RotateCcw,
+  BarChart3,
+  Database,
+  Users2,
+  RefreshCw,
+  X,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
 } from "lucide-react"
 import Link from "next/link"
 import Image from "next/image"
@@ -76,6 +91,81 @@ import { useBackendHealth } from "@/hooks/use-backend-health"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
+
+interface IntegrationMapping {
+  id: number | string // Can be number or "manual_123" for manual mappings
+  source_platform: string
+  source_identifier: string
+  source_name?: string  // User's full name from analysis data
+  target_platform: string
+  target_identifier: string | null
+  mapping_successful: boolean
+  mapping_method: string | null
+  error_message: string | null
+  data_collected: boolean
+  data_points_count: number | null
+  created_at: string
+  mapping_key: string
+  // New properties for manual mappings
+  is_manual?: boolean
+  source?: 'integration' | 'manual'
+  mapping_type?: string
+  status?: string
+  confidence_score?: number
+  last_verified?: string
+}
+
+interface MappingStatistics {
+  overall_success_rate: number
+  total_attempts: number
+  mapped_members?: number
+  members_with_data?: number
+  manual_mappings_count?: number
+  github_was_enabled?: boolean | null
+  platform_breakdown: {
+    [key: string]: {
+      total_attempts: number
+      successful: number
+      failed: number
+      success_rate: number
+    }
+  }
+}
+
+// New interface for analysis-specific mapping statistics
+interface AnalysisMappingStatistics {
+  total_team_members: number
+  successful_mappings: number
+  members_with_data: number
+  success_rate: number
+  failed_mappings: number
+}
+
+interface ManualMapping {
+  id: number
+  source_platform: string
+  source_identifier: string
+  target_platform: string
+  target_identifier: string
+  mapping_type: string
+  confidence_score?: number
+  last_verified?: string
+  created_at: string
+  updated_at?: string
+  status: string
+  is_verified: boolean
+  mapping_key: string
+}
+
+interface ManualMappingStatistics {
+  total_mappings: number
+  manual_mappings: number
+  auto_detected_mappings: number
+  verified_mappings: number
+  verification_rate: number
+  platform_breakdown: { [key: string]: { [key: string]: number } }
+  last_updated?: string
+}
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -164,6 +254,16 @@ interface PreviewData {
   suggested_name?: string
   can_add?: boolean
   current_user?: string
+  permissions?: {
+    users?: {
+      access: boolean
+      error?: string
+    }
+    incidents?: {
+      access: boolean
+      error?: string
+    }
+  }
 }
 
 export default function IntegrationsPage() {
@@ -178,6 +278,40 @@ export default function IntegrationsPage() {
   const [githubIntegration, setGithubIntegration] = useState<GitHubIntegration | null>(null)
   const [slackIntegration, setSlackIntegration] = useState<SlackIntegration | null>(null)
   const [activeEnhancementTab, setActiveEnhancementTab] = useState<"github" | "slack" | null>(null)
+  
+  // Mapping data state
+  const [showMappingDialog, setShowMappingDialog] = useState(false)
+  const [selectedMappingPlatform, setSelectedMappingPlatform] = useState<'github' | 'slack' | null>(null)
+  const [mappingData, setMappingData] = useState<IntegrationMapping[]>([])
+  const [mappingStats, setMappingStats] = useState<MappingStatistics | null>(null)
+  const [analysisMappingStats, setAnalysisMappingStats] = useState<AnalysisMappingStatistics | null>(null)
+  const [currentAnalysisId, setCurrentAnalysisId] = useState<number | null>(null)
+  const [loadingMappingData, setLoadingMappingData] = useState(false)
+  const [inlineEditingId, setInlineEditingId] = useState<number | string | null>(null)
+  const [inlineEditingValue, setInlineEditingValue] = useState('')
+  const [savingInlineMapping, setSavingInlineMapping] = useState(false)
+  const [validatingGithub, setValidatingGithub] = useState(false)
+  const [githubValidation, setGithubValidation] = useState<{valid: boolean, message?: string} | null>(null)
+  
+  // Sorting state
+  const [sortField, setSortField] = useState<'email' | 'status' | 'data' | 'method'>('email')
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
+  const [showOnlyFailed, setShowOnlyFailed] = useState(false)
+  
+  // Manual mapping state
+  const [showManualMappingDialog, setShowManualMappingDialog] = useState(false)
+  const [manualMappings, setManualMappings] = useState<ManualMapping[]>([])
+  const [manualMappingStats, setManualMappingStats] = useState<ManualMappingStatistics | null>(null)
+  const [selectedManualMappingPlatform, setSelectedManualMappingPlatform] = useState<'github' | 'slack' | null>(null)
+  const [loadingManualMappings, setLoadingManualMappings] = useState(false)
+  const [newMappingDialogOpen, setNewMappingDialogOpen] = useState(false)
+  const [editingMapping, setEditingMapping] = useState<ManualMapping | null>(null)
+  const [newMappingForm, setNewMappingForm] = useState({
+    source_platform: 'rootly' as string,
+    source_identifier: '',
+    target_platform: 'github' as string,
+    target_identifier: ''
+  })
   const [githubToken, setGithubToken] = useState('')
   const [slackWebhookUrl, setSlackWebhookUrl] = useState('')
   const [slackBotToken, setSlackBotToken] = useState('')
@@ -214,12 +348,14 @@ export default function IntegrationsPage() {
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'success' | 'error' | 'duplicate'>('idle')
   const [previewData, setPreviewData] = useState<PreviewData | null>(null)
   const [duplicateInfo, setDuplicateInfo] = useState<any>(null)
-  const [isAdding, setIsAdding] = useState(false)
+  const [isAddingRootly, setIsAddingRootly] = useState(false)
+  const [isAddingPagerDuty, setIsAddingPagerDuty] = useState(false)
   const [copied, setCopied] = useState(false)
   
   // Edit/Delete state
   const [editingIntegration, setEditingIntegration] = useState<number | null>(null)
   const [editingName, setEditingName] = useState("")
+  const [savingIntegrationId, setSavingIntegrationId] = useState<number | null>(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [integrationToDelete, setIntegrationToDelete] = useState<Integration | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
@@ -292,7 +428,47 @@ export default function IntegrationsPage() {
     }
   }, [slackIntegration, activeEnhancementTab])
 
-  const loadAllIntegrations = async () => {
+  const loadAllIntegrations = async (forceRefresh = false) => {
+    // Check localStorage cache first if not forcing refresh
+    if (!forceRefresh) {
+      const cachedIntegrations = localStorage.getItem('all_integrations')
+      const cacheTimestamp = localStorage.getItem('all_integrations_timestamp')
+      
+      if (cachedIntegrations && cacheTimestamp) {
+        const cacheAge = Date.now() - parseInt(cacheTimestamp)
+        const maxCacheAge = 5 * 60 * 1000 // 5 minutes
+        
+        if (cacheAge < maxCacheAge) {
+          try {
+            const parsedIntegrations = JSON.parse(cachedIntegrations)
+            console.log('Loading integrations from cache:', parsedIntegrations.length, 'integrations')
+            setIntegrations(parsedIntegrations)
+            
+            // Still fetch GitHub/Slack status if not cached separately
+            const cachedGithub = localStorage.getItem('github_integration')
+            const cachedSlack = localStorage.getItem('slack_integration')
+            
+            if (cachedGithub) {
+              const githubData = JSON.parse(cachedGithub)
+              setGithubIntegration(githubData.connected ? githubData.integration : null)
+            }
+            if (cachedSlack) {
+              const slackData = JSON.parse(cachedSlack)
+              setSlackIntegration(slackData.integration)
+            }
+            
+            // If we have all cached data, no need to fetch
+            if (cachedGithub && cachedSlack) {
+              setLoadingIntegrations(false)
+              return
+            }
+          } catch (error) {
+            console.error('Error parsing cached integrations:', error)
+          }
+        }
+      }
+    }
+
     setLoadingIntegrations(true)
     try {
       const authToken = localStorage.getItem('auth_token')
@@ -328,6 +504,14 @@ export default function IntegrationsPage() {
       setIntegrations(allIntegrations)
       setGithubIntegration(githubData.connected ? githubData.integration : null)
       setSlackIntegration(slackData.integration)
+      
+      // Cache the integrations (same as dashboard caching)
+      localStorage.setItem('all_integrations', JSON.stringify(allIntegrations))
+      localStorage.setItem('all_integrations_timestamp', Date.now().toString())
+      
+      // Cache GitHub and Slack integration status separately
+      localStorage.setItem('github_integration', JSON.stringify(githubData))
+      localStorage.setItem('slack_integration', JSON.stringify(slackData))
       
       // Update back URL based on integration status
       if (backUrl === '') {
@@ -527,6 +711,7 @@ export default function IntegrationsPage() {
             total_users: data.preview?.total_users || data.account_info?.total_users,
             suggested_name: data.preview?.suggested_name || data.account_info?.suggested_name,
             can_add: data.preview?.can_add || data.account_info?.can_add,
+            permissions: data.account_info?.permissions
           })
         } else {
           setPreviewData(data.account_info)
@@ -548,7 +733,12 @@ export default function IntegrationsPage() {
   const addIntegration = async (platform: "rootly" | "pagerduty") => {
     if (!previewData) return
     
-    setIsAdding(true)
+    // Set service-specific loading state
+    if (platform === 'rootly') {
+      setIsAddingRootly(true)
+    } else {
+      setIsAddingPagerDuty(true)
+    }
     try {
       const authToken = localStorage.getItem('auth_token')
       if (!authToken) {
@@ -612,8 +802,8 @@ export default function IntegrationsPage() {
         setPreviewData(null)
         setAddingPlatform(null)
         
-        // Reload integrations
-        loadAllIntegrations()
+        // Reload integrations to show the newly added one
+        await loadAllIntegrations(true)
       } else {
         throw new Error(responseData.detail?.message || responseData.message || 'Failed to add integration')
       }
@@ -621,7 +811,12 @@ export default function IntegrationsPage() {
       console.error('Add integration error:', error)
       toast.error(error instanceof Error ? error.message : "An unexpected error occurred.")
     } finally {
-      setIsAdding(false)
+      // Reset service-specific loading state
+      if (platform === 'rootly') {
+        setIsAddingRootly(false)
+      } else {
+        setIsAddingPagerDuty(false)
+      }
     }
   }
 
@@ -647,11 +842,17 @@ export default function IntegrationsPage() {
       if (response.ok) {
         toast.success("The integration has been removed.")
         
-        // Clear local storage
+        // Optimized: Update local state directly instead of full reload
+        const updatedIntegrations = integrations.filter(i => i.id !== integrationToDelete.id)
+        setIntegrations(updatedIntegrations)
+        
+        // Update cache with filtered results
+        localStorage.setItem('all_integrations', JSON.stringify(updatedIntegrations))
+        localStorage.setItem('all_integrations_timestamp', Date.now().toString())
+        
+        // Clear platform-specific cache
         localStorage.removeItem(`${integrationToDelete.platform}_integrations`)
         localStorage.removeItem(`${integrationToDelete.platform}_integrations_timestamp`)
-        localStorage.removeItem('all_integrations')
-        localStorage.removeItem('all_integrations_timestamp')
         
         // If we deleted the currently selected integration, clear the selection
         const selectedOrg = localStorage.getItem('selected_organization')
@@ -659,7 +860,6 @@ export default function IntegrationsPage() {
           localStorage.removeItem('selected_organization')
         }
         
-        loadAllIntegrations()
         setDeleteDialogOpen(false)
         setIntegrationToDelete(null)
       } else {
@@ -674,6 +874,7 @@ export default function IntegrationsPage() {
   }
 
   const updateIntegrationName = async (integration: Integration, newName: string) => {
+    setSavingIntegrationId(integration.id)
     try {
       const authToken = localStorage.getItem('auth_token')
       if (!authToken) return
@@ -693,11 +894,25 @@ export default function IntegrationsPage() {
 
       if (response.ok) {
         toast.success("Integration name has been updated.")
-        loadAllIntegrations()
+        
+        // Update the integration in state without reloading everything
+        setIntegrations(prevIntegrations => 
+          prevIntegrations.map(int => 
+            int.id === integration.id 
+              ? { ...int, name: newName }
+              : int
+          )
+        )
+        
+        // Clear cache to ensure next full reload has fresh data
+        localStorage.removeItem('all_integrations')
+        localStorage.removeItem('all_integrations_timestamp')
       }
     } catch (error) {
       console.error('Error updating name:', error)
       toast.error("Could not update integration name.")
+    } finally {
+      setSavingIntegrationId(null)
     }
   }
 
@@ -739,7 +954,7 @@ export default function IntegrationsPage() {
       
       setGithubToken('')
       setActiveEnhancementTab(null)
-      loadAllIntegrations()
+      loadAllIntegrations(true) // Force refresh to update cache
     } catch (error) {
       console.error('Error connecting GitHub:', error)
       toast.error(error instanceof Error ? error.message : "An unexpected error occurred.")
@@ -764,7 +979,7 @@ export default function IntegrationsPage() {
       if (response.ok) {
         toast.success("Your GitHub integration has been removed.")
         setGithubDisconnectDialogOpen(false)
-        loadAllIntegrations()
+        loadAllIntegrations(true) // Force refresh after changes
       }
     } catch (error) {
       console.error('Error disconnecting GitHub:', error)
@@ -860,7 +1075,7 @@ export default function IntegrationsPage() {
       if (response.ok) {
         toast.success("Your Slack integration has been removed.")
         setSlackDisconnectDialogOpen(false)
-        loadAllIntegrations()
+        loadAllIntegrations(true) // Force refresh after changes
       }
     } catch (error) {
       console.error('Error disconnecting Slack:', error)
@@ -936,6 +1151,582 @@ export default function IntegrationsPage() {
       console.error('Error loading Slack permissions:', error)
     } finally {
       setIsLoadingPermissions(false)
+    }
+  }
+
+  // Mapping data handlers
+  const loadMappingData = async (platform: 'github' | 'slack') => {
+    console.log('🔴 loadMappingData called with platform:', platform)
+    setLoadingMappingData(true)
+    setSelectedMappingPlatform(platform)
+    
+    try {
+      const authToken = localStorage.getItem('auth_token')
+      if (!authToken) {
+        console.error('🔴 No auth token found')
+        toast.error('Please log in to view mapping data')
+        return
+      }
+
+      // Use the existing working endpoints
+      console.log(`🔍 DEBUG: Fetching mapping data for platform: ${platform}`)
+      console.log(`🔍 DEBUG: API URLs:`, {
+        mappings: `${API_BASE}/integrations/mappings/platform/${platform}`,
+        stats: `${API_BASE}/integrations/mappings/success-rate?platform=${platform}`
+      })
+      
+      const [mappingsResponse, statsResponse] = await Promise.all([
+        fetch(`${API_BASE}/integrations/mappings/platform/${platform}`, {
+          headers: { 'Authorization': `Bearer ${authToken}` }
+        }),
+        fetch(`${API_BASE}/integrations/mappings/success-rate?platform=${platform}`, {
+          headers: { 'Authorization': `Bearer ${authToken}` }
+        })
+      ])
+
+      console.log('🔍 API Response statuses:', {
+        mappings: mappingsResponse.status,
+        stats: statsResponse.status
+      })
+
+      if (mappingsResponse.ok && statsResponse.ok) {
+        const mappings = await mappingsResponse.json()
+        const stats = await statsResponse.json()
+        
+        const failedMappings = mappings.filter(m => !m.target_identifier)
+        const successfulMappings = mappings.filter(m => m.target_identifier)
+        
+        console.log(`🔍 DEBUG: Received data for ${platform}:`, {
+          mappings: mappings.length,
+          stats: stats,
+          failed_mappings: failedMappings.length,
+          successful_mappings: successfulMappings.length,
+          sample_failed: failedMappings.slice(0, 2).map(m => ({
+            email: m.source_identifier,
+            target: m.target_identifier,
+            successful: m.mapping_successful,
+            error: m.error_message
+          })),
+          sample_successful: successfulMappings.slice(0, 2).map(m => ({
+            email: m.source_identifier,
+            target: m.target_identifier,
+            successful: m.mapping_successful
+          }))
+        })
+        
+        setMappingData(mappings)
+        setMappingStats(stats)
+        setAnalysisMappingStats(null)
+        setCurrentAnalysisId(null)
+        setShowMappingDialog(true)
+        
+        console.log('🔍 Successfully set all state, opening dialog')
+        
+        // Show success message only if dialog is already open (refresh action)
+        if (showMappingDialog) {
+          toast.success(`${platform === 'github' ? 'GitHub' : 'Slack'} mapping data refreshed successfully`)
+        }
+      } else {
+        console.error('🔴 API responses not OK:', {
+          mappingsStatus: mappingsResponse.status,
+          statsStatus: statsResponse.status,
+          mappingsText: await mappingsResponse.text().catch(() => 'Could not read response'),
+          statsText: await statsResponse.text().catch(() => 'Could not read response')
+        })
+        throw new Error(`Failed to fetch mapping data - Mappings: ${mappingsResponse.status}, Stats: ${statsResponse.status}`)
+      }
+    } catch (error) {
+      console.error('🔴 Error loading mapping data:', error)
+      toast.error(`Failed to load mapping data: ${error.message}`)
+    } finally {
+      console.log('🔍 Setting loadingMappingData to false')
+      setLoadingMappingData(false)
+    }
+  }
+
+  // Inline mapping edit handlers
+  const startInlineEdit = (mappingId: number | string, currentValue: string = '') => {
+    // Don't allow editing of manual mappings inline since they already exist
+    if (typeof mappingId === 'string' && mappingId.startsWith('manual_')) {
+      toast.error('Manual mappings cannot be edited. They are already mapped.')
+      return
+    }
+    setInlineEditingId(mappingId)
+    setInlineEditingValue(currentValue)
+    setGithubValidation(null)
+  }
+  
+  // Validate GitHub username
+  const validateGithubUsername = async (username: string) => {
+    if (!username.trim()) {
+      setGithubValidation({ valid: false, message: 'Username cannot be empty' })
+      return false
+    }
+    
+    setValidatingGithub(true)
+    try {
+      const authToken = localStorage.getItem('auth_token')
+      if (!authToken) {
+        setGithubValidation({ valid: false, message: 'Not authenticated' })
+        return false
+      }
+      
+      const response = await fetch(`${API_BASE}/integrations/mappings/github/validate/${encodeURIComponent(username.trim())}`, {
+        headers: { 'Authorization': `Bearer ${authToken}` }
+      })
+      
+      const data = await response.json()
+      console.log('🔍 GitHub validation response:', {
+        status: response.status,
+        data: data,
+        url: response.url
+      })
+      
+      if (response.ok && data.valid) {
+        setGithubValidation({ valid: true, message: `Found: ${data.name || data.username}` })
+        return true
+      } else {
+        const errorMsg = data.message || data.error || `API Error (${response.status})`
+        setGithubValidation({ valid: false, message: errorMsg })
+        console.error('❌ GitHub validation failed:', errorMsg)
+        return false
+      }
+    } catch (error) {
+      console.error('Error validating GitHub username:', error)
+      setGithubValidation({ valid: false, message: 'Validation failed' })
+      return false
+    } finally {
+      setValidatingGithub(false)
+    }
+  }
+  
+  // Sorting function
+  const handleSort = (field: 'email' | 'status' | 'data' | 'method') => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortField(field)
+      setSortDirection('asc')
+    }
+  }
+  
+  // Filter and sort mappings
+  const filteredMappings = showOnlyFailed 
+    ? mappingData.filter(m => !m.mapping_successful)
+    : mappingData
+    
+  const sortedMappings = [...filteredMappings].sort((a, b) => {
+    let aValue: any, bValue: any
+    
+    switch (sortField) {
+      case 'email':
+        aValue = a.source_identifier.toLowerCase()
+        bValue = b.source_identifier.toLowerCase()
+        break
+      case 'status':
+        aValue = a.mapping_successful ? 1 : 0
+        bValue = b.mapping_successful ? 1 : 0
+        break
+      case 'data':
+        aValue = a.data_points_count || 0
+        bValue = b.data_points_count || 0
+        break
+      case 'method':
+        aValue = a.mapping_method || ''
+        bValue = b.mapping_method || ''
+        break
+    }
+    
+    if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1
+    if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1
+    return 0
+  })
+
+  const cancelInlineEdit = () => {
+    setInlineEditingId(null)
+    setInlineEditingValue('')
+    setGithubValidation(null)
+  }
+
+  const startEditExisting = (mappingId: number | string, currentValue: string) => {
+    setInlineEditingId(mappingId)
+    setInlineEditingValue(currentValue)
+    setGithubValidation(null)
+  }
+
+  const saveEditedMapping = async (mappingId: number | string, email: string) => {
+    if (!inlineEditingValue.trim()) {
+      toast.error('Please enter a valid username')
+      return
+    }
+    
+    const authToken = localStorage.getItem('auth_token')
+    if (!authToken) {
+      toast.error('Please log in to edit mappings')
+      return
+    }
+    
+    // Validate GitHub username first (for both manual and auto mappings)
+    if (selectedMappingPlatform === 'github') {
+      if (!githubValidation || githubValidation.valid !== true) {
+        const isValid = await validateGithubUsername(inlineEditingValue)
+        if (!isValid) {
+          toast.error(`Invalid GitHub username: ${githubValidation?.message || 'User not found'}`, {
+            duration: 4000
+          })
+          return
+        }
+      }
+    }
+    
+    // Handle manual mappings differently (use UserMapping endpoint during migration period)
+    if (typeof mappingId === 'string' && mappingId.startsWith('manual_')) {
+      // Extract the numeric ID from "manual_123" format
+      const numericId = parseInt(mappingId.replace('manual_', ''))
+      
+      setSavingInlineMapping(true)
+      try {
+        // Use the manual mappings endpoint instead
+        const response = await fetch(`${API_BASE}/integrations/manual-mappings/${numericId}`, {
+          method: 'PUT',
+          headers: {
+            'Authorization': `Bearer ${authToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            target_identifier: inlineEditingValue.trim()
+          })
+        })
+
+        if (response.ok) {
+          const result = await response.json()
+          toast.success(`Successfully updated manual mapping to '${inlineEditingValue}'`)
+          
+          // Update the local mapping data
+          setMappingData(prevData => 
+            prevData.map(m => 
+              m.id === mappingId 
+                ? { ...m, target_identifier: inlineEditingValue.trim(), mapping_successful: true }
+                : m
+            )
+          )
+          
+          // Clear editing state
+          setInlineEditingId(null)
+          setInlineEditingValue('')
+          setGithubValidation(null)
+          return
+        } else {
+          const errorData = await response.json()
+          toast.error(errorData.detail || 'Failed to update manual mapping')
+          return
+        }
+      } catch (error) {
+        console.error('Manual mapping edit error:', error)
+        toast.error('Failed to update manual mapping')
+        return
+      } finally {
+        setSavingInlineMapping(false)
+      }
+    }
+
+    setSavingInlineMapping(true)
+    try {
+
+      const response = await fetch(`${API_BASE}/integrations/mappings/${mappingId}/edit?new_target_identifier=${encodeURIComponent(inlineEditingValue.trim())}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          'Content-Type': 'application/json'
+        }
+      })
+
+      if (response.ok) {
+        const result = await response.json()
+        toast.success(result.message || `Successfully updated mapping to '${inlineEditingValue}'`)
+        
+        // Update the local mapping data
+        setMappingData(prevData => 
+          prevData.map(m => 
+            m.id === mappingId 
+              ? { 
+                  ...m, 
+                  target_identifier: inlineEditingValue.trim(),
+                  mapping_successful: true,
+                  is_manual: true,  // It becomes manual after editing
+                  source: 'manual',
+                  mapping_method: 'manual_edit',
+                  last_updated: new Date().toISOString()
+                } 
+              : m
+          )
+        )
+        
+        // Clear editing state
+        setInlineEditingId(null)
+        setInlineEditingValue('')
+        setGithubValidation(null)
+      } else {
+        const errorData = await response.json()
+        toast.error(errorData.message || 'Failed to update mapping')
+      }
+    } catch (error) {
+      console.error('Error updating mapping:', error)
+      toast.error('Failed to update mapping')
+    } finally {
+      setSavingInlineMapping(false)
+    }
+  }
+  
+  // Handle inline value change with debounced validation
+  const handleInlineValueChange = (value: string) => {
+    setInlineEditingValue(value)
+    setGithubValidation(null) // Clear previous validation
+    
+    // Debounce validation
+    if (value.trim() && selectedMappingPlatform === 'github') {
+      const timeoutId = setTimeout(() => {
+        validateGithubUsername(value)
+      }, 500)
+      
+      return () => clearTimeout(timeoutId)
+    }
+  }
+
+  const saveInlineMapping = async (mappingId: number | string, email: string) => {
+    // Skip manual mappings - they can't be edited inline as they already exist
+    if (typeof mappingId === 'string' && mappingId.startsWith('manual_')) {
+      toast.error('Manual mappings cannot be edited inline')
+      return
+    }
+    if (!inlineEditingValue.trim()) {
+      toast.error('Please enter a GitHub username')
+      return
+    }
+    
+    // Validate GitHub username first
+    if (selectedMappingPlatform === 'github') {
+      // If we haven't validated yet or validation failed, validate now
+      if (!githubValidation || githubValidation.valid !== true) {
+        const isValid = await validateGithubUsername(inlineEditingValue)
+        if (!isValid) {
+          toast.error(`Invalid GitHub username: ${githubValidation?.message || 'User not found'}`, {
+            duration: 4000
+          })
+          return
+        }
+      }
+    }
+
+    setSavingInlineMapping(true)
+    try {
+      const authToken = localStorage.getItem('auth_token')
+      if (!authToken) {
+        toast.error('Please log in to save mappings')
+        return
+      }
+
+      const response = await fetch(`${API_BASE}/integrations/manual-mappings`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          source_platform: 'rootly',
+          source_identifier: email,
+          target_platform: selectedMappingPlatform,
+          target_identifier: inlineEditingValue.trim()
+        })
+      })
+
+      if (response.ok) {
+        toast.success(`Manual mapping saved: ${email} → ${inlineEditingValue}`)
+        
+        // Update the local mapping data to show the change immediately
+        setMappingData(prevData => 
+          prevData.map(m => 
+            m.id === mappingId 
+              ? { 
+                  ...m, 
+                  target_identifier: inlineEditingValue.trim(),
+                  mapping_successful: true,
+                  error_message: null,
+                  mapping_method: 'manual'
+                }
+              : m
+          )
+        )
+        
+        // Reset inline editing state
+        setInlineEditingId(null)
+        setInlineEditingValue('')
+        
+        // Note: The manual mapping is saved but won't show in IntegrationMapping 
+        // until the next analysis is run
+        toast.info('Manual mapping saved. Run a new analysis to use this mapping.', {
+          duration: 5000
+        })
+      } else {
+        const error = await response.json()
+        toast.error(`Failed to save mapping: ${error.detail || 'Unknown error'}`)
+      }
+    } catch (error) {
+      console.error('Error saving manual mapping:', error)
+      toast.error('Failed to save mapping')
+    } finally {
+      setSavingInlineMapping(false)
+    }
+  }
+
+  // Manual mapping handlers
+  const loadManualMappings = async (platform: 'github' | 'slack') => {
+    try {
+      setLoadingManualMappings(true)
+      setSelectedManualMappingPlatform(platform)
+      
+      const authToken = localStorage.getItem('auth_token')
+      if (!authToken) {
+        toast.error('Please log in to view manual mappings')
+        return
+      }
+      
+      const [mappingsResponse, statsResponse] = await Promise.all([
+        fetch(`${API_BASE}/integrations/manual-mappings?target_platform=${platform}`, {
+          headers: {
+            'Authorization': `Bearer ${authToken}`,
+            'Content-Type': 'application/json'
+          }
+        }),
+        fetch(`${API_BASE}/integrations/manual-mappings/statistics`, {
+          headers: {
+            'Authorization': `Bearer ${authToken}`,
+            'Content-Type': 'application/json'
+          }
+        })
+      ])
+      
+      if (mappingsResponse.ok && statsResponse.ok) {
+        const mappingsData = await mappingsResponse.json()
+        const statsData = await statsResponse.json()
+        
+        setManualMappings(mappingsData)
+        setManualMappingStats(statsData)
+        setShowManualMappingDialog(true)
+      } else {
+        toast.error('Failed to load manual mappings')
+      }
+    } catch (error) {
+      console.error('Error loading manual mappings:', error)
+      toast.error('Failed to load manual mappings')
+    } finally {
+      setLoadingManualMappings(false)
+    }
+  }
+
+  const createManualMapping = async () => {
+    try {
+      const authToken = localStorage.getItem('auth_token')
+      if (!authToken) {
+        toast.error('Please log in to create mappings')
+        return
+      }
+
+      const response = await fetch(`${API_BASE}/integrations/manual-mappings`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(newMappingForm)
+      })
+      
+      if (response.ok) {
+        toast.success('Manual mapping created successfully')
+        // Reload mappings if dialog is open
+        if (showManualMappingDialog && selectedManualMappingPlatform) {
+          loadManualMappings(selectedManualMappingPlatform)
+        }
+        setNewMappingDialogOpen(false)
+        setNewMappingForm({
+          source_platform: 'rootly',
+          source_identifier: '',
+          target_platform: selectedManualMappingPlatform || 'github',
+          target_identifier: ''
+        })
+      } else {
+        const errorData = await response.json()
+        toast.error(errorData.detail || 'Failed to create mapping')
+      }
+    } catch (error) {
+      console.error('Error creating manual mapping:', error)
+      toast.error('Failed to create mapping')
+    }
+  }
+
+  const updateManualMapping = async (mappingId: number, targetIdentifier: string) => {
+    try {
+      const authToken = localStorage.getItem('auth_token')
+      if (!authToken) {
+        toast.error('Please log in to update mappings')
+        return
+      }
+
+      const response = await fetch(`${API_BASE}/integrations/manual-mappings/${mappingId}`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ target_identifier: targetIdentifier })
+      })
+      
+      if (response.ok) {
+        toast.success('Manual mapping updated successfully')
+        // Reload mappings
+        if (showManualMappingDialog && selectedManualMappingPlatform) {
+          loadManualMappings(selectedManualMappingPlatform)
+        }
+        setEditingMapping(null)
+      } else {
+        const errorData = await response.json()
+        toast.error(errorData.detail || 'Failed to update mapping')
+      }
+    } catch (error) {
+      console.error('Error updating manual mapping:', error)
+      toast.error('Failed to update mapping')
+    }
+  }
+
+  const deleteManualMapping = async (mappingId: number) => {
+    try {
+      const authToken = localStorage.getItem('auth_token')
+      if (!authToken) {
+        toast.error('Please log in to delete mappings')
+        return
+      }
+
+      const response = await fetch(`${API_BASE}/integrations/manual-mappings/${mappingId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          'Content-Type': 'application/json'
+        }
+      })
+      
+      if (response.ok) {
+        toast.success('Manual mapping deleted successfully')
+        // Reload mappings
+        if (showManualMappingDialog && selectedManualMappingPlatform) {
+          loadManualMappings(selectedManualMappingPlatform)
+        }
+      } else {
+        const errorData = await response.json()
+        toast.error(errorData.detail || 'Failed to delete mapping')
+      }
+    } catch (error) {
+      console.error('Error deleting manual mapping:', error)
+      toast.error('Failed to delete mapping')
     }
   }
 
@@ -1066,15 +1857,14 @@ export default function IntegrationsPage() {
                 {activeTab !== 'rootly' && rootlyCount > 0 && (
                   <Badge variant="secondary" className="absolute top-4 right-4">{rootlyCount}</Badge>
                 )}
-                <div className="flex items-center justify-center gap-3">
+                <div className="flex items-center justify-center">
                   <Image
-                    src="/images/rootly-logo-new.png"
+                    src="/images/rootly-logo-branded.png"
                     alt="Rootly"
-                    width={80}
+                    width={200}
                     height={80}
-                    className="h-20 w-20 object-contain"
+                    className="h-16 w-auto object-contain"
                   />
-                  <span className="text-5xl font-bold" style={{ color: '#F5A623' }}>rootly</span>
                 </div>
               </Card>
 
@@ -1241,7 +2031,7 @@ export default function IntegrationsPage() {
                 <CardHeader className="p-8">
                   <div className="flex items-center space-x-3">
                     <div className="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
-                      <Image src="/images/rootly-logo-new.png" alt="Rootly" width={24} height={24} />
+                      <Image src="/images/rootly-logo-branded.png" alt="Rootly" width={24} height={24} />
                     </div>
                     <div>
                       <CardTitle>Add Rootly Integration</CardTitle>
@@ -1347,6 +2137,40 @@ export default function IntegrationsPage() {
                                 <div className="space-y-1 text-sm">
                                   <p><span className="font-medium">Organization:</span> {previewData.organization_name}</p>
                                   <p><span className="font-medium">Users:</span> {previewData.total_users}</p>
+                                  {previewData.permissions && (
+                                    <div className="mt-2">
+                                      <p className="font-medium">Permissions:</p>
+                                      <div className="grid grid-cols-2 gap-2 mt-1">
+                                        <div className="flex items-center">
+                                          {previewData.permissions.users?.access ? (
+                                            <CheckCircle className="w-3 h-3 text-green-600 mr-1" />
+                                          ) : (
+                                            <AlertCircle className="w-3 h-3 text-red-600 mr-1" />
+                                          )}
+                                          <span className="text-xs">Users</span>
+                                        </div>
+                                        <div className="flex items-center">
+                                          {previewData.permissions.incidents?.access ? (
+                                            <CheckCircle className="w-3 h-3 text-green-600 mr-1" />
+                                          ) : (
+                                            <AlertCircle className="w-3 h-3 text-red-600 mr-1" />
+                                          )}
+                                          <span className="text-xs">Incidents</span>
+                                        </div>
+                                      </div>
+                                      {(!previewData.permissions.users?.access || !previewData.permissions.incidents?.access) && (
+                                        <div className="mt-2 p-2 bg-red-50 border border-red-200 rounded text-xs">
+                                          <p className="font-medium text-red-800">Missing permissions:</p>
+                                          {!previewData.permissions.users?.access && (
+                                            <p className="text-red-700">• Users: {previewData.permissions.users?.error}</p>
+                                          )}
+                                          {!previewData.permissions.incidents?.access && (
+                                            <p className="text-red-700">• Incidents: {previewData.permissions.incidents?.error}</p>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                             </AlertDescription>
@@ -1414,10 +2238,10 @@ export default function IntegrationsPage() {
                           <Button
                             type="button"
                             onClick={() => addIntegration('rootly')}
-                            disabled={isAdding}
+                            disabled={isAddingRootly}
                             className="bg-green-600 hover:bg-green-700"
                           >
-                            {isAdding ? (
+                            {isAddingRootly ? (
                               <>
                                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                                 Adding...
@@ -1468,12 +2292,11 @@ export default function IntegrationsPage() {
                         <Alert className="border-green-200 bg-green-50">
                           <AlertDescription>
                             <ol className="space-y-2 text-sm">
-                              <li><strong>1.</strong> In your PagerDuty account, click on your <strong>profile icon</strong> in the top-right</li>
-                              <li><strong>2.</strong> Select <code className="bg-green-100 px-1 rounded">User Settings</code></li>
-                              <li><strong>3.</strong> Scroll down to the <strong>API Access</strong> section</li>
-                              <li><strong>4.</strong> Click <code className="bg-green-100 px-1 rounded">Create API User Token</code></li>
-                              <li><strong>5.</strong> Give it a description (e.g., <strong>"Burnout Detector"</strong>) and click <strong>Create</strong></li>
-                              <li><strong>6.</strong> Copy the generated token (starts with letters/numbers like <strong>"u+..."</strong>)</li>
+                              <li><strong>1.</strong> In your PagerDuty account, click on <strong>Integrations</strong> in the top navigation</li>
+                              <li><strong>2.</strong> Look for <strong>API Access Keys</strong> in the dropdown menu</li>
+                              <li><strong>3.</strong> Click <code className="bg-green-100 px-1 rounded">Create API User Token</code> (NOT "Create API Key" - must be user-level)</li>
+                              <li><strong>4.</strong> Give it a description (e.g., <strong>"Burnout Detector"</strong>) and click <strong>Create</strong></li>
+                              <li><strong>5.</strong> Copy the generated token (starts with letters/numbers like <strong>"u+..."</strong>)</li>
                             </ol>
                           </AlertDescription>
                         </Alert>
@@ -1617,10 +2440,10 @@ export default function IntegrationsPage() {
                           <Button
                             type="button"
                             onClick={() => addIntegration('pagerduty')}
-                            disabled={isAdding}
+                            disabled={isAddingPagerDuty}
                             className="bg-blue-600 hover:bg-blue-700"
                           >
-                            {isAdding ? (
+                            {isAddingPagerDuty ? (
                               <>
                                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                                 Adding...
@@ -1689,9 +2512,20 @@ export default function IntegrationsPage() {
                 <CardContent className="p-6 space-y-4">
                   {filteredIntegrations.map((integration) => (
                     <div key={integration.id} className={`
-                      p-6 rounded-lg border
+                      p-6 rounded-lg border relative
                       ${integration.platform === 'rootly' ? 'border-green-200 bg-green-50' : 'border-green-200 bg-green-50'}
+                      ${savingIntegrationId === integration.id ? 'opacity-75' : ''}
                     `}>
+                      {/* Saving overlay */}
+                      {savingIntegrationId === integration.id && (
+                        <div className="absolute inset-0 bg-white bg-opacity-50 flex items-center justify-center rounded-lg">
+                          <div className="flex items-center space-x-2">
+                            <Loader2 className="w-5 h-5 animate-spin" />
+                            <span className="text-sm font-medium">Saving...</span>
+                          </div>
+                        </div>
+                      )}
+                      
                       <div className="flex items-center justify-between">
                         <div className="flex-1">
                           <div className="flex items-center space-x-3 mb-2">
@@ -1702,8 +2536,9 @@ export default function IntegrationsPage() {
                                   value={editingName}
                                   onChange={(e) => setEditingName(e.target.value)}
                                   className="h-8 w-48"
+                                  disabled={savingIntegrationId === integration.id}
                                   onKeyDown={(e) => {
-                                    if (e.key === 'Enter') {
+                                    if (e.key === 'Enter' && savingIntegrationId !== integration.id) {
                                       updateIntegrationName(integration, editingName)
                                       setEditingIntegration(null)
                                     } else if (e.key === 'Escape') {
@@ -1714,6 +2549,7 @@ export default function IntegrationsPage() {
                                 <Button
                                   size="sm"
                                   variant="ghost"
+                                  disabled={savingIntegrationId === integration.id}
                                   onClick={() => {
                                     updateIntegrationName(integration, editingName)
                                     setEditingIntegration(null)
@@ -1728,6 +2564,7 @@ export default function IntegrationsPage() {
                                 <Button
                                   size="sm"
                                   variant="ghost"
+                                  disabled={savingIntegrationId === integration.id}
                                   onClick={() => {
                                     setEditingIntegration(integration.id)
                                     setEditingName(integration.name)
@@ -2330,7 +3167,27 @@ export default function IntegrationsPage() {
                         <CardDescription>Username: {githubIntegration.github_username}</CardDescription>
                       </div>
                     </div>
-                    <div className="flex items-center">
+                    <div className="flex items-center space-x-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => loadMappingData('github')}
+                        disabled={loadingMappingData}
+                        className="bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 hover:text-blue-800 hover:border-blue-300"
+                        title="View and manage GitHub user mappings"
+                      >
+                        {loadingMappingData && selectedMappingPlatform === 'github' ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Loading...
+                          </>
+                        ) : (
+                          <>
+                            <Users className="w-4 h-4 mr-2" />
+                            View Mappings
+                          </>
+                        )}
+                      </Button>
                       <Button
                         size="sm"
                         variant="ghost"
@@ -2402,6 +3259,26 @@ export default function IntegrationsPage() {
                       </div>
                     </div>
                     <div className="flex items-center space-x-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => loadMappingData('slack')}
+                        disabled={loadingMappingData}
+                        className="bg-purple-50 text-purple-700 border-purple-200 hover:bg-purple-100 hover:text-purple-800 hover:border-purple-300"
+                        title="View and manage Slack user mappings"
+                      >
+                        {loadingMappingData && selectedMappingPlatform === 'slack' ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Loading...
+                          </>
+                        ) : (
+                          <>
+                            <Users className="w-4 h-4 mr-2" />
+                            View Mappings
+                          </>
+                        )}
+                      </Button>
                       <Button
                         size="sm"
                         variant="ghost"
@@ -2738,6 +3615,729 @@ export default function IntegrationsPage() {
           </div>
         )}
       </main>
+
+      {/* Data Mapping Drawer */}
+      <Sheet open={showMappingDialog} onOpenChange={setShowMappingDialog}>
+        <SheetContent className="w-full sm:max-w-4xl lg:max-w-5xl overflow-y-auto">
+          <SheetHeader className="space-y-4">
+            <SheetTitle className="flex items-center justify-between pr-6">
+              <div className="flex items-center space-x-2">
+                <BarChart3 className="w-5 h-5" />
+                <span>
+                  {selectedMappingPlatform === 'github' ? 'GitHub' : 'Slack'} Data Mapping
+                </span>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  console.log('🔴 REFRESH BUTTON CLICKED!', selectedMappingPlatform)
+                  selectedMappingPlatform && loadMappingData(selectedMappingPlatform)
+                }}
+                disabled={loadingMappingData}
+                className="h-8 w-8 p-0"
+                title="Refresh mapping data"
+              >
+                <RefreshCw className={`w-4 h-4 ${loadingMappingData ? 'animate-spin' : ''}`} />
+              </Button>
+            </SheetTitle>
+            <SheetDescription>
+              View how team members from your incident data are mapped to {selectedMappingPlatform === 'github' ? 'GitHub' : 'Slack'} accounts. Click the refresh button to reload the latest mapping data.
+            </SheetDescription>
+          </SheetHeader>
+
+          {mappingStats && (
+            <div className="relative space-y-6">
+              {/* Loading overlay when refreshing */}
+              {loadingMappingData && (
+                <div className="absolute inset-0 bg-white/80 backdrop-blur-sm flex items-center justify-center z-10 rounded-lg">
+                  <div className="flex items-center space-x-2 text-gray-600">
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span className="text-sm">Refreshing mapping data...</span>
+                  </div>
+                </div>
+              )}
+              
+              {/* Overall Statistics */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
+                <Card className="p-4 border-purple-200">
+                  <div className="flex items-center space-x-2">
+                    <Users2 className="w-4 h-4 text-green-600" />
+                    <div>
+                      <div className="text-2xl font-bold">{(mappingStats as any).mapped_members || mappingStats.total_attempts}</div>
+                      <div className="text-sm text-gray-600">Mapped Members</div>
+                    </div>
+                  </div>
+                </Card>
+                <Card className="p-4 border-purple-200">
+                  <div className="flex items-center space-x-2">
+                    <CheckCircle className="w-4 h-4 text-green-600" />
+                    <div>
+                      <div className="text-2xl font-bold text-green-600">
+                        {mappingStats.overall_success_rate}%
+                      </div>
+                      <div className="text-sm text-gray-600">Success Rate</div>
+                    </div>
+                  </div>
+                </Card>
+                <Card className="p-4 border-purple-200">
+                  <div className="flex items-center space-x-2">
+                    <Database className="w-4 h-4 text-purple-600" />
+                    <div>
+                      <div className="text-2xl font-bold">
+                        {(mappingStats as any).members_with_data || mappingData.filter(m => m.data_collected && m.mapping_successful).length}
+                      </div>
+                      <div className="text-sm text-gray-600">With Data</div>
+                    </div>
+                  </div>
+                </Card>
+              </div>
+
+              {/* Mapping Results Table */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold">Mapping Results</h3>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={showOnlyFailed}
+                      onChange={(e) => setShowOnlyFailed(e.target.checked)}
+                      className="rounded border-gray-300"
+                    />
+                    Show only failed mappings
+                  </label>
+                </div>
+                <div className="border rounded-lg overflow-hidden">
+                  <div className="bg-gray-50 px-4 py-3 border-b">
+                    <div className="grid grid-cols-4 gap-4 text-sm font-medium text-gray-600">
+                      <button
+                        onClick={() => handleSort('email')}
+                        className="flex items-center gap-1 hover:text-gray-900 text-left"
+                      >
+                        Team Member
+                        {sortField === 'email' ? (
+                          sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 opacity-50" />
+                        )}
+                      </button>
+                      <button
+                        onClick={() => handleSort('status')}
+                        className="flex items-center gap-1 hover:text-gray-900 text-left"
+                      >
+                        Status
+                        {sortField === 'status' ? (
+                          sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 opacity-50" />
+                        )}
+                      </button>
+                      <div>{selectedMappingPlatform === 'github' ? 'GitHub User' : 'Slack User'} 
+                        <span className="text-xs text-gray-500 block">Click + to add missing</span>
+                      </div>
+                      <button
+                        onClick={() => handleSort('method')}
+                        className="flex items-center gap-1 hover:text-gray-900 text-left"
+                      >
+                        Method
+                        {sortField === 'method' ? (
+                          sortDirection === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />
+                        ) : (
+                          <ArrowUpDown className="w-3 h-3 opacity-50" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="divide-y max-h-96 overflow-y-auto">
+                    {sortedMappings.length > 0 ? sortedMappings.map((mapping) => {
+                      console.log('🔍 Mapping row:', {
+                        id: mapping.id,
+                        email: mapping.source_identifier,
+                        target: mapping.target_identifier,
+                        successful: mapping.mapping_successful,
+                        hasTarget: !!mapping.target_identifier
+                      })
+                      return (
+                      <div key={mapping.id} className="px-4 py-3">
+                        <div className="grid grid-cols-4 gap-4 text-sm">
+                          <div className="font-medium" title={mapping.source_identifier}>
+                            <div className="truncate">
+                              {mapping.source_name ? (
+                                <>
+                                  <span className="font-semibold">{mapping.source_name}</span>
+                                  <div className="text-xs text-gray-500 truncate">{mapping.source_identifier}</div>
+                                </>
+                              ) : (
+                                mapping.source_identifier
+                              )}
+                            </div>
+                          </div>
+                          <div className="space-y-1">
+                            {mapping.mapping_successful ? (
+                              <Badge variant="default" className="bg-green-100 text-green-800 border-green-200">
+                                <CheckCircle className="w-3 h-3 mr-1" />
+                                Success
+                              </Badge>
+                            ) : (
+                              <Badge variant="destructive" className="bg-red-100 text-red-800 border-red-200">
+                                <AlertCircle className="w-3 h-3 mr-1" />
+                                Failed
+                              </Badge>
+                            )}
+                            <div className="text-xs text-gray-500">
+                              {mapping.data_points_count ? (
+                                <span>{mapping.data_points_count} data points</span>
+                              ) : (
+                                // Only show "No data" if GitHub was enabled in the analysis
+                                mappingStats?.github_was_enabled && selectedMappingPlatform === 'github' ? (
+                                  <span>No data</span>
+                                ) : null
+                              )}
+                            </div>
+                          </div>
+                          <div className="truncate" title={mapping.target_identifier || mapping.error_message || ''}>
+                            {(() => {
+                              console.log('🔍 Button logic for', mapping.source_identifier, {
+                                hasTarget: !!mapping.target_identifier,
+                                target: mapping.target_identifier,
+                                isEditing: inlineEditingId === mapping.id,
+                                shouldShowPlusButton: !mapping.target_identifier && inlineEditingId !== mapping.id,
+                                mapping_successful: mapping.mapping_successful,
+                                error_message: mapping.error_message,
+                                full_mapping: mapping,
+                                is_manual: mapping.is_manual
+                              })
+                              return mapping.target_identifier ? (
+                                inlineEditingId === mapping.id ? (
+                                  // Show edit form for existing mapping
+                                  <div className="space-y-1">
+                                    <div className="flex items-center space-x-2">
+                                      <input
+                                        type="text"
+                                        value={inlineEditingValue}
+                                        onChange={(e) => handleInlineValueChange(e.target.value)}
+                                        placeholder={`Edit ${selectedMappingPlatform === 'github' ? 'GitHub' : 'Slack'} username`}
+                                        className={`flex-1 px-2 py-1 text-xs border rounded focus:outline-none focus:ring-1 ${
+                                          githubValidation?.valid === false 
+                                            ? 'border-red-300 focus:ring-red-500' 
+                                            : githubValidation?.valid === true
+                                            ? 'border-green-300 focus:ring-green-500'
+                                            : 'border-gray-300 focus:ring-blue-500'
+                                        }`}
+                                        autoFocus
+                                        onKeyDown={(e) => {
+                                          if (e.key === 'Enter') {
+                                            saveEditedMapping(mapping.id, mapping.source_identifier)
+                                          } else if (e.key === 'Escape') {
+                                            cancelInlineEdit()
+                                          }
+                                        }}
+                                      />
+                                      <button
+                                        onClick={() => {
+                                          if (selectedMappingPlatform === 'github' && githubValidation?.valid !== true) {
+                                            toast.error(`Cannot save invalid username: ${githubValidation?.message || 'Please enter a valid GitHub username'}`, {
+                                              duration: 4000
+                                            })
+                                            return
+                                          }
+                                          saveEditedMapping(mapping.id, mapping.source_identifier)
+                                        }}
+                                        disabled={savingInlineMapping || validatingGithub}
+                                        className={`p-1 hover:opacity-80 disabled:opacity-50 ${
+                                          selectedMappingPlatform === 'github' && githubValidation?.valid !== true
+                                            ? 'text-gray-400 cursor-not-allowed'
+                                            : 'text-green-600 hover:text-green-700'
+                                        }`}
+                                        title="Save changes"
+                                      >
+                                        <CheckCircle className="w-4 h-4" />
+                                      </button>
+                                      <button
+                                        onClick={cancelInlineEdit}
+                                        disabled={savingInlineMapping}
+                                        className="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-50"
+                                        title="Cancel"
+                                      >
+                                        <X className="w-4 h-4" />
+                                      </button>
+                                    </div>
+                                    {/* Validation feedback */}
+                                    {(validatingGithub || githubValidation) && (
+                                      <div className="flex items-center gap-1 text-xs">
+                                        {validatingGithub ? (
+                                          <>
+                                            <Loader2 className="w-3 h-3 animate-spin" />
+                                            <span className="text-gray-500">Validating...</span>
+                                          </>
+                                        ) : githubValidation?.valid ? (
+                                          <>
+                                            <CheckCircle className="w-3 h-3 text-green-600" />
+                                            <span className="text-green-600">{githubValidation.message}</span>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <AlertCircle className="w-3 h-3 text-red-600" />
+                                            <span className="text-red-600">{githubValidation?.message}</span>
+                                          </>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : (
+                                  // Show existing mapping with manual indicator and edit button
+                                  <div className="flex items-center gap-1 group">
+                                    <span>{mapping.target_identifier}</span>
+                                    {mapping.is_manual && (
+                                      <Tooltip content="Manual mapping - will show data collection status after running an analysis">
+                                        <Badge variant="outline" className="ml-1 text-xs bg-blue-50 text-blue-700 border-blue-200 cursor-help">
+                                          Manual
+                                        </Badge>
+                                      </Tooltip>
+                                    )}
+                                    <button
+                                      onClick={() => startEditExisting(mapping.id, mapping.target_identifier)}
+                                      className="ml-1 p-1 text-gray-400 hover:text-blue-600 transition-colors"
+                                      title="Edit mapping"
+                                    >
+                                      <Edit3 className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                )
+                              ) : inlineEditingId === mapping.id ? (
+                              // Show inline edit form
+                              <div className="space-y-1">
+                                <div className="flex items-center space-x-2">
+                                  <input
+                                    type="text"
+                                    value={inlineEditingValue}
+                                    onChange={(e) => handleInlineValueChange(e.target.value)}
+                                    placeholder={`Enter ${selectedMappingPlatform === 'github' ? 'GitHub' : 'Slack'} username`}
+                                    className={`flex-1 px-2 py-1 text-xs border rounded focus:outline-none focus:ring-1 ${
+                                      githubValidation?.valid === false 
+                                        ? 'border-red-300 focus:ring-red-500' 
+                                        : githubValidation?.valid === true
+                                        ? 'border-green-300 focus:ring-green-500'
+                                        : 'border-gray-300 focus:ring-blue-500'
+                                    }`}
+                                    autoFocus
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      saveInlineMapping(mapping.id, mapping.source_identifier)
+                                    } else if (e.key === 'Escape') {
+                                      cancelInlineEdit()
+                                    }
+                                  }}
+                                />
+                                <button
+                                  onClick={() => {
+                                    if (selectedMappingPlatform === 'github' && githubValidation?.valid !== true) {
+                                      toast.error(`Cannot save invalid username: ${githubValidation?.message || 'Please enter a valid GitHub username'}`, {
+                                        duration: 4000
+                                      })
+                                      return
+                                    }
+                                    saveInlineMapping(mapping.id, mapping.source_identifier)
+                                  }}
+                                  disabled={savingInlineMapping || validatingGithub}
+                                  className={`p-1 hover:opacity-80 disabled:opacity-50 ${
+                                    selectedMappingPlatform === 'github' && githubValidation?.valid !== true
+                                      ? 'text-gray-400 cursor-not-allowed'
+                                      : 'text-green-600 hover:text-green-700'
+                                  }`}
+                                  title={
+                                    selectedMappingPlatform === 'github' && githubValidation?.valid !== true
+                                      ? 'Enter a valid GitHub username to save'
+                                      : 'Save'
+                                  }
+                                >
+                                  <CheckCircle className="w-4 h-4" />
+                                </button>
+                                <button
+                                  onClick={cancelInlineEdit}
+                                  disabled={savingInlineMapping}
+                                  className="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-50"
+                                  title="Cancel"
+                                >
+                                  <X className="w-4 h-4" />
+                                </button>
+                                </div>
+                                {/* Validation feedback */}
+                                {(validatingGithub || githubValidation) && (
+                                  <div className="flex items-center gap-1 text-xs">
+                                    {validatingGithub ? (
+                                      <>
+                                        <Loader2 className="w-3 h-3 animate-spin" />
+                                        <span className="text-gray-500">Validating...</span>
+                                      </>
+                                    ) : githubValidation?.valid ? (
+                                      <>
+                                        <CheckCircle className="w-3 h-3 text-green-600" />
+                                        <span className="text-green-600">{githubValidation.message}</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <AlertCircle className="w-3 h-3 text-red-600" />
+                                        <span className="text-red-600">{githubValidation?.message}</span>
+                                      </>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            ) : (
+                              // Show clickable "Add username" area
+                              <button
+                                onClick={() => startInlineEdit(mapping.id)}
+                                className="w-full text-left px-2 py-1 text-xs text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded border border-dashed border-gray-300 hover:border-blue-300 transition-colors flex items-center gap-2"
+                                title={`Click to add ${selectedMappingPlatform === 'github' ? 'GitHub' : 'Slack'} username`}
+                              >
+                                <Plus className="w-3 h-3 flex-shrink-0" />
+                                <span className="truncate">Click to add {selectedMappingPlatform === 'github' ? 'GitHub' : 'Slack'} username</span>
+                              </button>
+                            )
+                            })()}
+                          </div>
+                          <div className="text-gray-600">
+                            {mapping.is_manual ? (
+                              <div className="flex items-center gap-1">
+                                <Tooltip content="Manual mapping - will show data collection status after running an analysis">
+                                  <span className="cursor-help">Manual</span>
+                                </Tooltip>
+                                <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200">
+                                  User Added
+                                </Badge>
+                              </div>
+                            ) : (
+                              mapping.mapping_method?.replace('_', ' ') || 'Auto-detected'
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      )
+                    }) : (
+                      <div className="px-4 py-8 text-center text-gray-500">
+                        No mapping data available yet. Run an analysis to see mapping results.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+        </SheetContent>
+      </Sheet>
+
+      {/* Manual Mapping Management Dialog */}
+      <Dialog open={showManualMappingDialog} onOpenChange={setShowManualMappingDialog}>
+        <DialogContent className="max-w-5xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center space-x-2">
+              <Users2 className="w-5 h-5" />
+              <span>
+                Manage {selectedManualMappingPlatform === 'github' ? 'GitHub' : 'Slack'} Manual Mappings
+              </span>
+            </DialogTitle>
+            <DialogDescription>
+              Create and manage manual user mappings for {selectedManualMappingPlatform === 'github' ? 'GitHub' : 'Slack'} platform correlations.
+            </DialogDescription>
+          </DialogHeader>
+
+          {manualMappingStats && (
+            <div className="space-y-6">
+              {/* Statistics Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <Card className="p-4">
+                  <div className="flex items-center space-x-2">
+                    <Database className="w-4 h-4 text-blue-600" />
+                    <div>
+                      <div className="text-2xl font-bold">{manualMappingStats.total_mappings}</div>
+                      <div className="text-sm text-gray-600">Total Mappings</div>
+                    </div>
+                  </div>
+                </Card>
+                <Card className="p-4">
+                  <div className="flex items-center space-x-2">
+                    <Edit3 className="w-4 h-4 text-green-600" />
+                    <div>
+                      <div className="text-2xl font-bold text-green-600">
+                        {manualMappingStats.manual_mappings}
+                      </div>
+                      <div className="text-sm text-gray-600">Manual</div>
+                    </div>
+                  </div>
+                </Card>
+                <Card className="p-4">
+                  <div className="flex items-center space-x-2">
+                    <Zap className="w-4 h-4 text-purple-600" />
+                    <div>
+                      <div className="text-2xl font-bold text-purple-600">
+                        {manualMappingStats.auto_detected_mappings}
+                      </div>
+                      <div className="text-sm text-gray-600">Auto-Detected</div>
+                    </div>
+                  </div>
+                </Card>
+                <Card className="p-4">
+                  <div className="flex items-center space-x-2">
+                    <CheckCircle className="w-4 h-4 text-green-600" />
+                    <div>
+                      <div className="text-2xl font-bold text-green-600">
+                        {Math.round(manualMappingStats.verification_rate * 100)}%
+                      </div>
+                      <div className="text-sm text-gray-600">Verified</div>
+                    </div>
+                  </div>
+                </Card>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex justify-between items-center">
+                <Button 
+                  onClick={() => {
+                    setNewMappingForm({
+                      source_platform: 'rootly',
+                      source_identifier: '',
+                      target_platform: selectedManualMappingPlatform || 'github',
+                      target_identifier: ''
+                    })
+                    setNewMappingDialogOpen(true)
+                  }}
+                  className="flex items-center space-x-2"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Add New Mapping</span>
+                </Button>
+                
+                <Button 
+                  variant="outline" 
+                  onClick={() => selectedManualMappingPlatform && loadManualMappings(selectedManualMappingPlatform)}
+                  disabled={loadingManualMappings}
+                >
+                  {loadingManualMappings ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <RotateCcw className="w-4 h-4 mr-2" />
+                  )}
+                  Refresh
+                </Button>
+              </div>
+
+              {/* Mappings Table */}
+              <div className="space-y-3">
+                <h3 className="text-lg font-semibold">Current Mappings</h3>
+                {manualMappings.length > 0 ? (
+                  <div className="border rounded-lg overflow-hidden">
+                    <div className="bg-gray-50 px-4 py-3 border-b">
+                      <div className="grid grid-cols-6 gap-4 text-sm font-medium text-gray-600">
+                        <div>Source Platform</div>
+                        <div>Source Identifier</div>
+                        <div>Target Identifier</div>
+                        <div>Type</div>
+                        <div>Status</div>
+                        <div>Actions</div>
+                      </div>
+                    </div>
+                    <div className="divide-y max-h-64 overflow-y-auto">
+                      {manualMappings.map((mapping) => (
+                        <div key={mapping.id} className="px-4 py-3">
+                          <div className="grid grid-cols-6 gap-4 text-sm items-center">
+                            <div className="font-medium">
+                              {mapping.source_platform}
+                            </div>
+                            <div className="truncate" title={mapping.source_identifier}>
+                              {mapping.source_identifier}
+                            </div>
+                            <div className="truncate" title={mapping.target_identifier}>
+                              {editingMapping?.id === mapping.id ? (
+                                <Input
+                                  value={mapping.target_identifier}
+                                  onChange={(e) => setEditingMapping({
+                                    ...editingMapping,
+                                    target_identifier: e.target.value
+                                  })}
+                                  className="h-8"
+                                />
+                              ) : (
+                                mapping.target_identifier
+                              )}
+                            </div>
+                            <div>
+                              <Badge variant={mapping.mapping_type === 'manual' ? 'default' : 'secondary'}>
+                                {mapping.mapping_type}
+                              </Badge>
+                            </div>
+                            <div>
+                              {mapping.is_verified ? (
+                                <Badge variant="default" className="bg-green-100 text-green-800 border-green-200">
+                                  <CheckCircle className="w-3 h-3 mr-1" />
+                                  Verified
+                                </Badge>
+                              ) : (
+                                <Badge variant="secondary">
+                                  <Clock className="w-3 h-3 mr-1" />
+                                  Pending
+                                </Badge>
+                              )}
+                            </div>
+                            <div className="flex items-center space-x-1">
+                              {editingMapping?.id === mapping.id ? (
+                                <>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => updateManualMapping(mapping.id, editingMapping.target_identifier)}
+                                    className="h-8 w-8 p-0 text-green-600 hover:text-green-700"
+                                  >
+                                    <Check className="w-4 h-4" />
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => setEditingMapping(null)}
+                                    className="h-8 w-8 p-0 text-gray-600 hover:text-gray-700"
+                                  >
+                                    <ArrowLeft className="w-4 h-4" />
+                                  </Button>
+                                </>
+                              ) : (
+                                <>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => setEditingMapping(mapping)}
+                                    className="h-8 w-8 p-0 text-blue-600 hover:text-blue-700"
+                                  >
+                                    <Edit3 className="w-4 h-4" />
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => deleteManualMapping(mapping.id)}
+                                    className="h-8 w-8 p-0 text-red-600 hover:text-red-700"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="border rounded-lg p-8 text-center text-gray-500">
+                    <Users2 className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+                    <h3 className="text-lg font-medium mb-2">No manual mappings yet</h3>
+                    <p className="text-sm">Create your first manual mapping to get started.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowManualMappingDialog(false)}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* New Manual Mapping Dialog */}
+      <Dialog open={newMappingDialogOpen} onOpenChange={setNewMappingDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center space-x-2">
+              <Plus className="w-5 h-5" />
+              <span>Create New Manual Mapping</span>
+            </DialogTitle>
+            <DialogDescription>
+              Create a manual mapping between a source platform user and {selectedManualMappingPlatform === 'github' ? 'GitHub' : 'Slack'} account.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Source Platform</label>
+                <Select 
+                  value={newMappingForm.source_platform} 
+                  onValueChange={(value) => setNewMappingForm(prev => ({...prev, source_platform: value}))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select source platform" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="rootly">Rootly</SelectItem>
+                    <SelectItem value="pagerduty">PagerDuty</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Target Platform</label>
+                <Select 
+                  value={newMappingForm.target_platform} 
+                  onValueChange={(value) => setNewMappingForm(prev => ({...prev, target_platform: value}))}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select target platform" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="github">GitHub</SelectItem>
+                    <SelectItem value="slack">Slack</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Source Identifier</label>
+              <Input
+                placeholder="e.g., john.doe@company.com or John Doe"
+                value={newMappingForm.source_identifier}
+                onChange={(e) => setNewMappingForm(prev => ({...prev, source_identifier: e.target.value}))}
+              />
+              <p className="text-xs text-gray-500">
+                The email or name as it appears in {newMappingForm.source_platform} incidents
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Target Identifier</label>
+              <Input
+                placeholder={
+                  newMappingForm.target_platform === 'github' 
+                    ? "e.g., johndoe or john-doe-123"
+                    : "e.g., U1234567890 or @johndoe"
+                }
+                value={newMappingForm.target_identifier}
+                onChange={(e) => setNewMappingForm(prev => ({...prev, target_identifier: e.target.value}))}
+              />
+              <p className="text-xs text-gray-500">
+                The {newMappingForm.target_platform === 'github' ? 'GitHub username' : 'Slack user ID or @username'}
+              </p>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => setNewMappingDialogOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button 
+              onClick={createManualMapping}
+              disabled={!newMappingForm.source_identifier || !newMappingForm.target_identifier}
+            >
+              Create Mapping
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* GitHub Disconnect Confirmation Dialog */}
       <Dialog open={githubDisconnectDialogOpen} onOpenChange={setGithubDisconnectDialogOpen}>

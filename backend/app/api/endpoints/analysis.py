@@ -12,8 +12,8 @@ from sqlalchemy.orm import Session
 from ...models import get_db, User, Analysis, RootlyIntegration
 from ...auth.dependencies import get_current_active_user
 from ...core.rootly_client import RootlyAPIClient
-from ...core.simple_burnout_analyzer import SimpleBurnoutAnalyzer
-from ...services.burnout_analyzer import BurnoutAnalyzerService
+from ...services.unified_burnout_analyzer import UnifiedBurnoutAnalyzer
+from ...services.github_only_burnout_analyzer import GitHubOnlyBurnoutAnalyzer
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -22,6 +22,10 @@ class AnalysisRequest(BaseModel):
     days_back: int = 30
     include_weekends: bool = True
     integration_id: Optional[int] = None  # If not provided, use default integration
+
+class GitHubOnlyAnalysisRequest(BaseModel):
+    days_back: int = 30
+    team_emails: Optional[list] = None  # If not provided, will discover from mappings
 
 class AnalysisResponse(BaseModel):
     analysis_id: int
@@ -224,10 +228,89 @@ async def get_analysis_history(
         for analysis in analyses
     ]
 
+@router.post("/github-only", response_model=AnalysisResponse)
+async def start_github_only_analysis(
+    request: GitHubOnlyAnalysisRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Start a GitHub-only burnout analysis when no incident data is available."""
+    
+    # Check for GitHub integration
+    from ...models import GitHubIntegration
+    github_integration = db.query(GitHubIntegration).filter(
+        GitHubIntegration.user_id == current_user.id,
+        GitHubIntegration.github_token.isnot(None)
+    ).first()
+    
+    if not github_integration:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No GitHub integration found. Please connect your GitHub account first."
+        )
+    
+    # Create analysis record with GitHub-only flag
+    analysis = Analysis(
+        user_id=current_user.id,
+        rootly_integration_id=None,  # No Rootly integration for GitHub-only
+        status="pending",
+        config={
+            "days_back": request.days_back,
+            "analysis_type": "github_only",
+            "team_emails": request.team_emails,
+            "include_weekends": True
+        }
+    )
+    db.add(analysis)
+    db.commit()
+    db.refresh(analysis)
+    
+    # Start GitHub-only analysis in background
+    background_tasks.add_task(
+        run_github_only_analysis_task,
+        analysis.id,
+        request.days_back,
+        request.team_emails,
+        current_user.id
+    )
+    
+    return AnalysisResponse(
+        analysis_id=analysis.id,
+        status="started",
+        message=f"GitHub-only analysis started for {request.days_back} days. This usually takes 1-2 minutes."
+    )
+
 async def run_analysis_task(analysis_id: int, integration_id: int, days_back: int, user_id: int):
     """Background task to run the actual analysis."""
     db = next(get_db())
     
+    try:
+        # Set a timeout for the entire analysis (5 minutes)
+        async def run_with_timeout():
+            return await asyncio.wait_for(_run_analysis_task_impl(db, analysis_id, integration_id, days_back, user_id), timeout=300)
+        
+        await run_with_timeout()
+        
+    except asyncio.TimeoutError:
+        logger.error(f"Analysis {analysis_id} timed out after 5 minutes")
+        analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
+        if analysis:
+            analysis.status = "failed"
+            analysis.error_message = "Analysis timed out after 5 minutes. This may be due to too much data or API rate limits."
+            db.commit()
+    except Exception as e:
+        logger.error(f"Analysis {analysis_id} failed: {str(e)}", exc_info=True)
+        analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
+        if analysis:
+            analysis.status = "failed"
+            analysis.error_message = str(e)
+            db.commit()
+    finally:
+        db.close()
+
+async def _run_analysis_task_impl(db, analysis_id: int, integration_id: int, days_back: int, user_id: int):
+    """Implementation of the analysis task."""
     try:
         # Update status to running
         analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
@@ -243,47 +326,130 @@ async def run_analysis_task(analysis_id: int, integration_id: int, days_back: in
         integration.last_used_at = datetime.now()
         db.commit()
         
-        # Get user for LLM token access
+        # Get user for LLM token access and check available integrations
         user = db.query(User).filter(User.id == user_id).first()
         has_llm_token = user and user.llm_token and user.llm_provider
         
-        # Initialize analyzer - use full analyzer if LLM token available, simple otherwise
-        if has_llm_token:
-            logger.info(f"User has LLM token ({user.llm_provider}), using full analyzer with AI enhancement")
+        # Check for GitHub integration
+        from ...models import GitHubIntegration
+        github_integration = db.query(GitHubIntegration).filter(
+            GitHubIntegration.user_id == user_id,
+            GitHubIntegration.github_token.isnot(None)
+        ).first()
+        has_github = bool(github_integration)
+        
+        # Attempt to collect incident data to determine if GitHub-only analysis is needed
+        incident_data_available = False
+        try:
+            logger.info(f"Testing incident data availability for integration '{integration.name}'")
+            client = RootlyAPIClient(integration.api_token)
+            test_data = await client.collect_analysis_data(days_back=1)  # Quick test with 1 day
             
-            # Set user context for AI analysis
-            from ...services.ai_burnout_analyzer import set_user_context
-            set_user_context(user)
+            # Check if we got meaningful incident data
+            incidents = test_data.get("incidents", [])
+            users = test_data.get("users", [])
+            metadata = test_data.get("collection_metadata", {})
             
-            analyzer = BurnoutAnalyzerService(integration.api_token, integration.platform)
+            # Check for various failure conditions that should trigger GitHub-only fallback
+            connection_failed = (
+                metadata.get("connection_failed", False) or
+                metadata.get("error", "").startswith("Connection test failed") or
+                "HTTP 401" in metadata.get("error", "") or
+                "HTTP 403" in metadata.get("error", "")
+            )
             
-            # Run full analysis with AI enhancement
+            # Only consider incident data available if we have meaningful data
+            incident_data_available = (
+                len(users) > 0 and 
+                not connection_failed and
+                not metadata.get("incidents_api_failed", False)
+            )
+            
+            logger.info(f"Incident data test: {len(incidents)} incidents, {len(users)} users, available: {incident_data_available}")
+            
+        except Exception as e:
+            logger.warning(f"Failed to test incident data availability: {e}")
+            incident_data_available = False
+        
+        # Determine analysis strategy
+        if not incident_data_available and has_github:
+            logger.info("No incident data available but GitHub integration found - using GitHub-only analysis")
+            
+            # Collect GitHub data for the team
+            from ...services.github_collector import collect_team_github_data
+            try:
+                # Get team member emails from GitHub integration or user mappings
+                from ...models import UserMapping
+                team_emails = []
+                
+                # Try to get emails from user mappings
+                mappings = db.query(UserMapping).filter(
+                    UserMapping.user_id == user_id,
+                    UserMapping.target_platform == "github"
+                ).all()
+                
+                team_emails = [mapping.source_identifier for mapping in mappings if mapping.source_identifier]
+                
+                if not team_emails:
+                    # Fallback: use the user's own email if available
+                    if user.email:
+                        team_emails = [user.email]
+                    else:
+                        raise Exception("No team member emails found for GitHub analysis")
+                
+                logger.info(f"Collecting GitHub data for {len(team_emails)} team members")
+                
+                # Decrypt GitHub token
+                from ...api.endpoints.github import decrypt_token
+                github_token = decrypt_token(github_integration.github_token)
+                
+                github_data = await collect_team_github_data(
+                    team_emails, days_back, github_token
+                )
+                
+                if not github_data:
+                    raise Exception("No GitHub data collected for team members")
+                
+                # Use GitHub-only analyzer
+                github_analyzer = GitHubOnlyBurnoutAnalyzer()
+                results = await github_analyzer.analyze_team_burnout(
+                    github_data=github_data,
+                    time_range_days=days_back
+                )
+                
+                # Add metadata to indicate this was a GitHub-only analysis
+                results["analysis_type"] = "github_only"
+                results["data_sources"] = ["github"]
+                results["confidence_note"] = "Analysis based on GitHub activity patterns only"
+                
+            except Exception as e:
+                logger.error(f"GitHub-only analysis failed: {e}")
+                raise Exception(f"GitHub-only analysis failed: {str(e)}")
+                
+        else:
+            logger.info(f"Using UnifiedBurnoutAnalyzer (AI={has_llm_token})")
+            
+            # Set user context for AI analysis if needed
+            if has_llm_token:
+                from ...services.ai_burnout_analyzer import set_user_context
+                set_user_context(user)
+                logger.info(f"Set user context for AI analysis (LLM provider: {user.llm_provider})")
+            
+            # Initialize UnifiedBurnoutAnalyzer
+            analyzer = UnifiedBurnoutAnalyzer(
+                api_token=integration.api_token,
+                platform=integration.platform,
+                enable_ai=has_llm_token,
+                github_token=None,  # TODO: Add GitHub integration
+                slack_token=None    # TODO: Add Slack integration
+            )
+            
+            # Run analysis
             results = await analyzer.analyze_burnout(
                 time_range_days=days_back,
                 include_weekends=True,
-                include_github=False,  # TODO: Add GitHub integration flags
-                include_slack=False    # TODO: Add Slack integration flags
-            )
-        else:
-            logger.info("No LLM token available, using simple analyzer")
-            # Initialize Rootly client
-            client = RootlyAPIClient(integration.api_token)
-            
-            # Collect data
-            logger.info(f"Collecting data from integration '{integration.name}' for {days_back} days")
-            raw_data = await client.collect_analysis_data(days_back=days_back)
-            
-            # Log detailed info about what was collected
-            logger.info(f"Data collection completed: {len(raw_data.get('users', []))} users, {len(raw_data.get('incidents', []))} incidents")
-            
-            # Initialize simple analyzer
-            analyzer = SimpleBurnoutAnalyzer()
-            
-            # Run simple analysis
-            results = analyzer.analyze_team_burnout(
-                users=raw_data["users"],
-                incidents=raw_data["incidents"],
-                metadata=raw_data["collection_metadata"]
+                user_id=user.id,
+                analysis_id=analysis_id
             )
         
         # Update analysis with results
@@ -296,6 +462,90 @@ async def run_analysis_task(analysis_id: int, integration_id: int, days_back: in
         
     except Exception as e:
         logger.error(f"Analysis {analysis_id} failed: {str(e)}", exc_info=True)
+        analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
+        if analysis:
+            analysis.status = "failed"
+            analysis.error_message = str(e)
+            db.commit()
+        raise
+
+async def run_github_only_analysis_task(analysis_id: int, days_back: int, team_emails: Optional[list], user_id: int):
+    """Background task to run GitHub-only burnout analysis."""
+    db = next(get_db())
+    
+    try:
+        # Update status to running
+        analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
+        analysis.status = "running"
+        db.commit()
+        
+        # Get user and GitHub integration
+        user = db.query(User).filter(User.id == user_id).first()
+        from ...models import GitHubIntegration
+        github_integration = db.query(GitHubIntegration).filter(
+            GitHubIntegration.user_id == user_id,
+            GitHubIntegration.github_token.isnot(None)
+        ).first()
+        
+        if not github_integration:
+            raise Exception("GitHub integration not found")
+        
+        # Determine team emails to analyze
+        if not team_emails:
+            # Get team member emails from user mappings
+            from ...models import UserMapping
+            mappings = db.query(UserMapping).filter(
+                UserMapping.user_id == user_id,
+                UserMapping.target_platform == "github"
+            ).all()
+            
+            team_emails = [mapping.source_identifier for mapping in mappings if mapping.source_identifier]
+            
+            if not team_emails:
+                # Fallback: use the user's own email if available
+                if user.email:
+                    team_emails = [user.email]
+                else:
+                    raise Exception("No team member emails found for GitHub analysis")
+        
+        logger.info(f"Running GitHub-only analysis for {len(team_emails)} team members")
+        
+        # Decrypt GitHub token
+        from ...api.endpoints.github import decrypt_token
+        github_token = decrypt_token(github_integration.github_token)
+        
+        # Collect GitHub data for the team
+        from ...services.github_collector import collect_team_github_data
+        github_data = await collect_team_github_data(
+            team_emails, days_back, github_token
+        )
+        
+        if not github_data:
+            raise Exception("No GitHub data collected for team members")
+        
+        # Use GitHub-only analyzer
+        github_analyzer = GitHubOnlyBurnoutAnalyzer()
+        results = await github_analyzer.analyze_team_burnout(
+            github_data=github_data,
+            time_range_days=days_back
+        )
+        
+        # Add metadata to indicate this was a GitHub-only analysis
+        results["analysis_type"] = "github_only"
+        results["data_sources"] = ["github"]
+        results["confidence_note"] = "Analysis based on GitHub activity patterns only"
+        results["team_emails_analyzed"] = team_emails
+        
+        # Update analysis with results
+        analysis.status = "completed"
+        analysis.results = results
+        analysis.completed_at = datetime.now()
+        db.commit()
+        
+        logger.info(f"GitHub-only analysis {analysis_id} completed successfully")
+        
+    except Exception as e:
+        logger.error(f"GitHub-only analysis {analysis_id} failed: {str(e)}", exc_info=True)
         # Update analysis with error
         analysis = db.query(Analysis).filter(Analysis.id == analysis_id).first()
         if analysis:

@@ -7,15 +7,18 @@ import logging
 from datetime import datetime
 
 try:
-    from smolagents import CodeAgent, HfApiModel
+    from smolagents import CodeAgent, LiteLLMModel
 except ImportError:
     # Fallback for development/testing
     CodeAgent = None
-    HfApiModel = None
+    LiteLLMModel = None
 
 from .tools.sentiment_analyzer import create_sentiment_analyzer_tool
 from .tools.pattern_analyzer import create_pattern_analyzer_tool
 from .tools.workload_analyzer import create_workload_analyzer_tool
+from .tools.code_quality_analyzer import create_code_quality_analyzer_tool
+from .tools.cross_platform_correlator import create_cross_platform_correlator_tool
+from .tools.burnout_predictor import create_burnout_predictor_tool
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +31,14 @@ class BurnoutDetectionAgent:
     adaptive analysis of burnout risk factors across multiple data sources.
     """
     
-    def __init__(self, model_name: str = "gpt-4o-mini"):
+    def __init__(self, model_name: str = "gpt-4o-mini", api_key: Optional[str] = None, provider: Optional[str] = None):
         """
         Initialize the burnout detection agent.
         
         Args:
             model_name: Name of the language model to use
+            api_key: Optional API key for LLM access
+            provider: LLM provider ('openai' or 'anthropic')
         """
         self.logger = logging.getLogger(__name__)
         
@@ -41,12 +46,15 @@ class BurnoutDetectionAgent:
         self.sentiment_analyzer = create_sentiment_analyzer_tool()
         self.pattern_analyzer = create_pattern_analyzer_tool()
         self.workload_analyzer = create_workload_analyzer_tool()
+        self.code_quality_analyzer = create_code_quality_analyzer_tool()
+        self.cross_platform_correlator = create_cross_platform_correlator_tool()
+        self.burnout_predictor = create_burnout_predictor_tool()
         
         # Initialize agent if smolagents is available
         self.agent = None
         self.agent_available = False
         
-        if CodeAgent:
+        if CodeAgent and api_key:
             try:
                 # Try to initialize with LLM (requires API key)
                 from smolagents import LiteLLMModel
@@ -54,23 +62,57 @@ class BurnoutDetectionAgent:
                 self.tools = [
                     self.sentiment_analyzer,
                     self.pattern_analyzer, 
-                    self.workload_analyzer
+                    self.workload_analyzer,
+                    self.code_quality_analyzer,
+                    self.cross_platform_correlator,
+                    self.burnout_predictor
                 ]
                 
                 # Create the actual smolagents agent with reasoning capabilities
-                self.agent = CodeAgent(
-                    tools=self.tools,
-                    model=LiteLLMModel(model_name),
-                    max_iterations=3  # Allow multiple reasoning steps
-                )
+                # Configure the model with the API key based on provider
+                import os
+                
+                # Set appropriate environment variable based on provider
+                if provider == "anthropic":
+                    os.environ["ANTHROPIC_API_KEY"] = api_key
+                    # Use appropriate Anthropic model name for LiteLLM
+                    if model_name == "gpt-4o-mini":  # Default was OpenAI
+                        model_name = "claude-3-haiku-20240307"  # Use Haiku for cost efficiency
+                elif provider == "openai":
+                    os.environ["OPENAI_API_KEY"] = api_key
+                else:
+                    # If provider not specified, try to detect from model name
+                    if "claude" in model_name.lower():
+                        os.environ["ANTHROPIC_API_KEY"] = api_key
+                        provider = "anthropic"
+                    else:
+                        os.environ["OPENAI_API_KEY"] = api_key
+                        provider = "openai"
+                
+                # Check if max_iterations is supported
+                try:
+                    self.agent = CodeAgent(
+                        tools=self.tools,
+                        model=LiteLLMModel(model_name),
+                        max_iterations=3  # Allow multiple reasoning steps
+                    )
+                except TypeError:
+                    # Fallback without max_iterations if not supported
+                    self.agent = CodeAgent(
+                        tools=self.tools,
+                        model=LiteLLMModel(model_name)
+                    )
                 
                 self.agent_available = True
-                self.logger.info(f"Smolagents agent initialized with {model_name} for natural language reasoning")
+                self.logger.info(f"Smolagents agent initialized with {model_name} ({provider}) for natural language reasoning")
                 
             except Exception as e:
                 self.logger.warning(f"Could not initialize smolagents with LLM: {e}")
                 self.logger.info("Falling back to direct tool usage")
                 self.agent_available = False
+        elif CodeAgent and not api_key:
+            self.logger.info("No API key provided - using direct tool analysis instead of LLM reasoning")
+            self.agent_available = False
         else:
             self.logger.warning("smolagents not available - using direct tool analysis")
             self.agent_available = False
@@ -119,23 +161,60 @@ class BurnoutDetectionAgent:
             
             # Create reasoning prompt
             prompt = f"""
-You are an expert burnout detection analyst. Analyze the burnout risk for {member_name} using the available tools and data.
+You are an expert burnout detection analyst with access to advanced analysis tools. Perform a comprehensive, multi-step burnout analysis for {member_name}.
 
 AVAILABLE DATA SOURCES: {', '.join(available_data_sources)}
 
 MEMBER DATA SUMMARY:
 {data_summary}
 
-ANALYSIS INSTRUCTIONS:
-1. Use the available tools (sentiment_analyzer, pattern_analyzer, workload_analyzer) to examine different aspects of their work patterns
-2. Consider the Maslach Burnout Inventory dimensions: Emotional Exhaustion, Depersonalization, Personal Accomplishment
-3. Look for concerning patterns like after-hours work, negative sentiment, excessive workload
-4. Generate specific, actionable recommendations based on the data patterns you discover
-5. Provide a confidence assessment based on data quality and quantity
+AVAILABLE TOOLS AND THEIR PURPOSES:
+- sentiment_analyzer: Analyze communication sentiment and stress indicators
+- pattern_analyzer: Detect temporal work patterns and anomalies
+- workload_analyzer: Evaluate workload distribution and sustainability
+- code_quality_analyzer: Assess code health, PR patterns, and development stress indicators
+- cross_platform_correlator: Find correlations between incidents, code activity, and communication
+- burnout_predictor: Predict future burnout risk based on trends and patterns
 
-Focus on generating insights that go beyond simple metrics - explain the "why" behind the patterns and provide contextual understanding.
+MULTI-STEP ANALYSIS INSTRUCTIONS:
 
-Please analyze {member_name}'s burnout risk now.
+Step 1: Workload Assessment
+- Use workload_analyzer to evaluate overall workload sustainability
+- Identify if workload is a primary burnout driver
+
+Step 2: Code Quality Analysis (if GitHub data available)
+- Use code_quality_analyzer to detect rushed development, large PRs, poor commit hygiene
+- Look for signs of technical debt accumulation and coding under pressure
+
+Step 3: Temporal Pattern Detection
+- Use pattern_analyzer on all available data sources
+- Identify unhealthy work patterns (late nights, weekends, no breaks)
+
+Step 4: Communication Health (if Slack data available)
+- Use sentiment_analyzer to assess communication stress
+- Look for negative sentiment patterns, stress keywords, emotional exhaustion
+
+Step 5: Cross-Platform Correlation
+- Use cross_platform_correlator to find hidden relationships
+- Identify stress propagation patterns (e.g., incidents → rushed code → negative communication)
+
+Step 6: Predictive Analysis
+- Use burnout_predictor to forecast future risk trajectory
+- Identify early warning signals and critical thresholds
+
+Step 7: Synthesis and Recommendations
+- Integrate findings across all tools
+- Consider Maslach dimensions: Emotional Exhaustion, Depersonalization, Personal Accomplishment
+- Generate specific, time-sensitive interventions
+
+REASONING APPROACH:
+- Start broad, then drill into specific concerns
+- Look for non-obvious correlations and feedback loops
+- Consider both individual patterns and team context
+- Provide confidence levels for each major finding
+- Explain the "why" behind patterns, not just the "what"
+
+Begin your comprehensive analysis of {member_name} now, using the tools in a logical sequence.
 """
 
             # Use smolagents to run the analysis with reasoning
@@ -221,7 +300,21 @@ Please analyze {member_name}'s burnout risk now.
         
         analysis_results["ai_insights"]["patterns"] = pattern_results
         
-        # 3. Sentiment Analysis (if communication data available)
+        # 3. Code Quality Analysis (NEW)
+        if "github" in available_data_sources and member_data.get("github_activity"):
+            code_quality_result = self.code_quality_analyzer(member_data.get("github_activity", {}))
+            analysis_results["ai_insights"]["code_quality"] = code_quality_result
+        
+        # 4. Cross-Platform Correlation (NEW)
+        if len(available_data_sources) > 1:
+            correlation_result = self.cross_platform_correlator(
+                member_data.get("incidents", []),
+                member_data.get("github_activity", {}),
+                member_data.get("slack_activity", {})
+            )
+            analysis_results["ai_insights"]["correlations"] = correlation_result
+        
+        # 5. Sentiment Analysis (if communication data available)
         sentiment_results = {}
         
         if "slack" in available_data_sources and member_data.get("slack_messages"):
@@ -715,14 +808,16 @@ Please analyze {member_name}'s burnout risk now.
         }
 
 
-def create_burnout_agent(model_name: str = "gpt-4o-mini") -> BurnoutDetectionAgent:
+def create_burnout_agent(model_name: str = "gpt-4o-mini", api_key: Optional[str] = None, provider: Optional[str] = None) -> BurnoutDetectionAgent:
     """
     Factory function to create a burnout detection agent.
     
     Args:
         model_name: Name of the language model to use
+        api_key: Optional API key for LLM access
+        provider: LLM provider ('openai' or 'anthropic')
         
     Returns:
         Configured BurnoutDetectionAgent instance
     """
-    return BurnoutDetectionAgent(model_name)
+    return BurnoutDetectionAgent(model_name, api_key, provider)
