@@ -672,3 +672,49 @@ async def cleanup_duplicate_mappings(
         logger.error(f"❌ Cleanup failed for user {current_user.id}: {e}")
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Cleanup failed: {str(e)}")
+
+@router.delete("/clear-mappings", summary="Clear all mappings for a platform")
+async def clear_platform_mappings(
+    platform: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Clear all mappings for a specific target platform."""
+    try:
+        logger.info(f"Clearing all {platform} mappings for user {current_user.id}")
+        
+        # Import UserMapping here to avoid circular imports
+        from ...models.user_mapping import UserMapping
+        
+        # Get all mappings for this user and platform
+        mappings_to_delete = db.query(UserMapping).filter(
+            UserMapping.user_id == current_user.id,
+            UserMapping.target_platform == platform
+        ).all()
+        
+        deleted_count = len(mappings_to_delete)
+        
+        if deleted_count > 0:
+            # Delete all mappings
+            for mapping in mappings_to_delete:
+                db.delete(mapping)
+            
+            db.commit()
+            logger.info(f"Successfully deleted {deleted_count} {platform} mappings for user {current_user.id}")
+            
+            return {
+                "message": f"Successfully cleared {deleted_count} {platform} mappings",
+                "deleted_count": deleted_count,
+                "platform": platform
+            }
+        else:
+            return {
+                "message": f"No {platform} mappings found to clear",
+                "deleted_count": 0,
+                "platform": platform
+            }
+            
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error clearing {platform} mappings: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to clear {platform} mappings")

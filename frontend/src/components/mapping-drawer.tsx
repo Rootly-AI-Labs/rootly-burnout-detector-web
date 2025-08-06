@@ -13,6 +13,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet"
 import { Tooltip } from "@/components/ui/tooltip"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import {
   AlertCircle,
   ArrowUpDown,
@@ -22,7 +23,8 @@ import {
   Users,
   Users2,
   X,
-  Edit2
+  Edit2,
+  Trash2
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -100,6 +102,10 @@ export function MappingDrawer({ isOpen, onClose, platform, onRefresh }: MappingD
     platform?: string
   }>>([])
   const [showMappingResults, setShowMappingResults] = useState(false)
+
+  // Clear mappings states
+  const [clearingMappings, setClearingMappings] = useState(false)
+  const [showClearConfirmation, setShowClearConfirmation] = useState(false)
 
   const loadMappingData = useCallback(async () => {
     console.log(`🚀 MappingDrawer: loadMappingData called - isOpen: ${isOpen}, platform: ${platform}`)
@@ -352,6 +358,46 @@ export function MappingDrawer({ isOpen, onClose, platform, onRefresh }: MappingD
     }
   }
 
+  const clearAllMappings = async () => {
+    setClearingMappings(true)
+    try {
+      const authToken = localStorage.getItem('auth_token')
+      if (!authToken) {
+        toast.error('Authentication required')
+        return
+      }
+      
+      const response = await fetch(`${API_BASE}/integrations/clear-mappings?platform=${platform}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${authToken}`
+        }
+      })
+      
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.detail || 'Failed to clear mappings')
+      }
+      
+      const result = await response.json()
+      
+      toast.success(`${result.message}`)
+      
+      // Reload mapping data to show cleared state
+      await loadMappingData()
+      onRefresh?.()
+      
+      // Close confirmation dialog
+      setShowClearConfirmation(false)
+      
+    } catch (error) {
+      console.error('Error clearing mappings:', error)
+      toast.error(error instanceof Error ? error.message : 'Failed to clear mappings')
+    } finally {
+      setClearingMappings(false)
+    }
+  }
+
   const saveInlineMapping = async (mappingId: number | string, email: string) => {
     if (!inlineEditingValue.trim()) {
       toast.error(`Please enter a ${platform === 'github' ? 'GitHub username' : 'Slack user ID'}`)
@@ -484,24 +530,36 @@ export function MappingDrawer({ isOpen, onClose, platform, onRefresh }: MappingD
                   <div className="mb-6 flex items-center justify-between">
                     <h3 className="font-semibold text-gray-900">Mapping Statistics</h3>
                     {platform === 'github' && (
-                      <Button
-                        onClick={runAutoMapping}
-                        disabled={runningAutoMapping}
-                        className="bg-blue-600 hover:bg-blue-700 text-white"
-                        size="sm"
-                      >
-                        {runningAutoMapping ? (
-                          <>
-                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                            Running Auto-Mapping...
-                          </>
-                        ) : (
-                          <>
-                            <Users className="w-4 h-4 mr-2" />
-                            Run GitHub Auto-Mapping
-                          </>
-                        )}
-                      </Button>
+                      <div className="flex items-center space-x-2">
+                        <Button
+                          onClick={runAutoMapping}
+                          disabled={runningAutoMapping || clearingMappings}
+                          className="bg-blue-600 hover:bg-blue-700 text-white"
+                          size="sm"
+                        >
+                          {runningAutoMapping ? (
+                            <>
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              Running Auto-Mapping...
+                            </>
+                          ) : (
+                            <>
+                              <Users className="w-4 h-4 mr-2" />
+                              Run GitHub Auto-Mapping
+                            </>
+                          )}
+                        </Button>
+                        <Button
+                          onClick={() => setShowClearConfirmation(true)}
+                          disabled={runningAutoMapping || clearingMappings || sortedMappings.length === 0}
+                          variant="outline"
+                          className="border-red-300 text-red-600 hover:bg-red-50 hover:border-red-400"
+                          size="sm"
+                        >
+                          <Trash2 className="w-4 h-4 mr-2" />
+                          Clear All Mappings
+                        </Button>
+                      </div>
                     )}
                   </div>
                   <div className="grid grid-cols-3 gap-4">
@@ -837,6 +895,59 @@ export function MappingDrawer({ isOpen, onClose, platform, onRefresh }: MappingD
           )}
         </div>
       </SheetContent>
+
+      {/* Clear Mappings Confirmation Dialog */}
+      <Dialog open={showClearConfirmation} onOpenChange={setShowClearConfirmation}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Clear All {platformTitle} Mappings</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to clear all {platformTitle} user mappings? This will remove{' '}
+              <strong>{sortedMappings.length} mapping{sortedMappings.length !== 1 ? 's' : ''}</strong>{' '}
+              and cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <div className="bg-red-50 border border-red-200 rounded-md p-3">
+              <div className="flex">
+                <AlertCircle className="w-5 h-5 text-red-400 mr-2 mt-0.5 flex-shrink-0" />
+                <div>
+                  <p className="text-sm text-red-800 font-medium">This action is permanent</p>
+                  <p className="text-sm text-red-700 mt-1">
+                    All user mappings will be deleted. You'll need to re-map users manually or run auto-mapping again to restore the connections.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowClearConfirmation(false)}
+              disabled={clearingMappings}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={clearAllMappings}
+              disabled={clearingMappings}
+            >
+              {clearingMappings ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Clearing...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Clear All Mappings
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Sheet>
   )
 }

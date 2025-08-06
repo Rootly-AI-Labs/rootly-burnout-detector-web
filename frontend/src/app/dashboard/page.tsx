@@ -14,6 +14,7 @@ import { Switch } from "@/components/ui/switch"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Tooltip as HoverTooltip } from "@/components/ui/tooltip"
 import {
   Line,
   LineChart,
@@ -1697,6 +1698,129 @@ export default function Dashboard() {
     return `${firstLine}\n${secondLine}`;
   };
 
+  // Custom radar chart tick with info tooltips
+  const RadarTickWithInfo = ({ payload, x, y, textAnchor, ...props }: any) => {
+    const factor = payload?.value;
+    const tooltipContent = burnoutFactorTooltips[factor as keyof typeof burnoutFactorTooltips];
+    
+    if (!factor) return null;
+
+    const formattedLabel = formatRadarLabel(factor);
+    const lines = formattedLabel.split('\n');
+    const lineHeight = 14;
+    const totalHeight = lines.length * lineHeight;
+    const startY = y - (totalHeight / 2) + (lineHeight / 2);
+
+    return (
+      <g>
+        {/* Factor label text */}
+        {lines.map((line, index) => (
+          <text
+            key={index}
+            x={x}
+            y={startY + (index * lineHeight)}
+            textAnchor={textAnchor}
+            fill="#374151"
+            fontSize="13"
+            fontWeight="500"
+          >
+            {line}
+          </text>
+        ))}
+        
+        {/* Info icon with tooltip */}
+        {tooltipContent && (
+          <HoverTooltip content={tooltipContent} side="top">
+            <g transform={`translate(${x + (textAnchor === 'start' ? 5 : textAnchor === 'end' ? -15 : -5)}, ${y + 12})`}>
+              <circle
+                cx="5"
+                cy="5" 
+                r="8"
+                fill="rgba(156, 163, 175, 0.1)"
+                stroke="rgba(156, 163, 175, 0.3)"
+                strokeWidth="1"
+                className="cursor-help hover:fill-gray-200 hover:stroke-gray-400 transition-colors"
+              />
+              <text
+                x="5"
+                y="5"
+                textAnchor="middle"
+                dominantBaseline="central"
+                fill="#9CA3AF"
+                fontSize="10"
+                fontWeight="bold"
+                className="cursor-help pointer-events-none"
+              >
+                i
+              </text>
+            </g>
+          </HoverTooltip>
+        )}
+      </g>
+    );
+  };
+
+  // Smaller version for member modal
+  const RadarTickWithInfoSmall = ({ payload, x, y, textAnchor, ...props }: any) => {
+    const factor = payload?.value;
+    const tooltipContent = burnoutFactorTooltips[factor as keyof typeof burnoutFactorTooltips];
+    
+    if (!factor) return null;
+
+    const formattedLabel = formatRadarLabel(factor);
+    const lines = formattedLabel.split('\n');
+    const lineHeight = 11;
+    const totalHeight = lines.length * lineHeight;
+    const startY = y - (totalHeight / 2) + (lineHeight / 2);
+
+    return (
+      <g>
+        {/* Factor label text */}
+        {lines.map((line, index) => (
+          <text
+            key={index}
+            x={x}
+            y={startY + (index * lineHeight)}
+            textAnchor={textAnchor}
+            fill="#374151"
+            fontSize="10"
+          >
+            {line}
+          </text>
+        ))}
+        
+        {/* Info icon with tooltip */}
+        {tooltipContent && (
+          <HoverTooltip content={tooltipContent} side="top">
+            <g transform={`translate(${x + (textAnchor === 'start' ? 3 : textAnchor === 'end' ? -10 : -3)}, ${y + 8})`}>
+              <circle
+                cx="3"
+                cy="3" 
+                r="6"
+                fill="rgba(156, 163, 175, 0.1)"
+                stroke="rgba(156, 163, 175, 0.3)"
+                strokeWidth="1"
+                className="cursor-help hover:fill-gray-200 hover:stroke-gray-400 transition-colors"
+              />
+              <text
+                x="3"
+                y="3"
+                textAnchor="middle"
+                dominantBaseline="central"
+                fill="#9CA3AF"
+                fontSize="8"
+                fontWeight="bold"
+                className="cursor-help pointer-events-none"
+              >
+                i
+              </text>
+            </g>
+          </HoverTooltip>
+        )}
+      </g>
+    );
+  };
+
   // Dynamic analysis stages based on selected data sources
   const getAnalysisStages = () => {
     const stages = [
@@ -2422,6 +2546,15 @@ export default function Dashboard() {
   // Get high-risk factors for emphasis (temporarily lowered threshold to test)
   const highRiskFactors = burnoutFactors.filter(f => f.value >= 2).sort((a, b) => b.value - a.value);
 
+  // Tooltip content definitions for burnout factors
+  const burnoutFactorTooltips = {
+    "Workload Intensity": "Measures overall workload based on incidents handled, GitHub activity, and time pressure. Higher values indicate excessive work demands that can lead to exhaustion.",
+    "After Hours Activity": "Tracks work performed outside of business hours (evenings, nights). Based on GitHub commits and incident responses after 6 PM and before 8 AM.",
+    "Weekend Work": "Measures work activity during weekends. Calculated from GitHub commits and incident handling on Saturdays and Sundays.",
+    "Response Pressure": "Evaluates time pressure in incident response. Based on average response times and urgency of incidents handled.",
+    "Incident Load": "Quantifies the burden of incident management. Factors in number of incidents, their severity, and frequency of high-priority issues."
+  };
+
   // Debug log to check the actual values
   useEffect(() => {
     console.log('🔍 DEBUG: Radar chart burnout factors:', burnoutFactors)
@@ -2680,7 +2813,7 @@ export default function Dashboard() {
               {!sidebarCollapsed && "Sign Out"}
             </Button>
             
-            {/* Powered by Rootly */}
+            {/* Powered by Rootly AI */}
             {!sidebarCollapsed && (
               <div className="mt-4 pt-4 border-t border-gray-700">
                 <a 
@@ -2689,12 +2822,12 @@ export default function Dashboard() {
                   rel="noopener noreferrer"
                   className="flex flex-col items-center -space-y-1 hover:opacity-80 transition-opacity"
                 >
-                  <span className="text-xs text-gray-400">powered by</span>
+                  <span className="text-xs text-slate-500">powered by</span>
                   <Image 
-                    src="/images/rootly-logo-branded.png" 
-                    alt="Rootly" 
-                    width={90} 
-                    height={24} 
+                    src="/images/rootly-ai-logo-white.png" 
+                    alt="Rootly AI" 
+                    width={160} 
+                    height={64} 
                     className="h-6 w-auto ml-3"
                   />
                 </a>
@@ -4109,15 +4242,14 @@ export default function Dashboard() {
                           <PolarGrid gridType="polygon" />
                           <PolarAngleAxis 
                             dataKey="factor" 
-                            tick={{ fontSize: 13, fill: '#374151', fontWeight: 500 }}
+                            tick={RadarTickWithInfo}
                             className="text-sm"
-                            tickFormatter={formatRadarLabel}
                           />
                           <PolarRadiusAxis 
                             domain={[0, 10]} 
                             tick={{ fontSize: 11, fill: '#6B7280' }}
                             tickCount={6}
-                            angle={270}
+                            angle={90}
                           />
                           <Radar 
                             dataKey="value" 
@@ -4184,6 +4316,12 @@ export default function Dashboard() {
                             <div className="flex items-center justify-between mb-2">
                               <div className="flex items-center space-x-2">
                                 <span className="font-medium text-gray-900">{factor.factor}</span>
+                                <HoverTooltip 
+                                  content={burnoutFactorTooltips[factor.factor as keyof typeof burnoutFactorTooltips]} 
+                                  side="top"
+                                >
+                                  <Info className="w-4 h-4 text-gray-400 hover:text-gray-600 cursor-help" />
+                                </HoverTooltip>
                                 <span className={`px-2 py-1 rounded-full text-xs font-medium ${
                                   factor.severity === 'Critical' ? 'bg-red-100 text-red-800' :
                                   factor.severity === 'Warning' ? 'bg-orange-100 text-orange-800' :
@@ -5516,15 +5654,14 @@ export default function Dashboard() {
                           <PolarGrid gridType="polygon" />
                           <PolarAngleAxis 
                             dataKey="factor" 
-                            tick={{ fontSize: 10, fill: '#374151' }}
+                            tick={RadarTickWithInfoSmall}
                             className="text-xs"
-                            tickFormatter={formatRadarLabel}
                           />
                           <PolarRadiusAxis 
                             domain={[0, 10]} 
                             tick={{ fontSize: 8, fill: '#6B7280' }}
                             tickCount={6}
-                            angle={270}
+                            angle={90}
                           />
                           <Radar 
                             dataKey="value" 
