@@ -253,9 +253,9 @@ export default function LandingPage() {
               <Image 
                 src="/images/oncall-burnout-logo.png" 
                 alt="OnCall Burnout" 
-                width={32} 
-                height={32}
-                className="w-8 h-8 mr-2 brightness-0 invert"
+                width={24} 
+                height={24}
+                className="w-6 h-6 mr-3 brightness-0 invert"
               />
               <div className="flex items-center">
                 <span className="text-2xl font-semibold text-white">OnCall Burnout</span>

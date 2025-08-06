@@ -1756,9 +1756,9 @@ export default function IntegrationsPage() {
               <Image 
                 src="/images/oncall-burnout-logo.png" 
                 alt="OnCall Burnout" 
-                width={48} 
-                height={48}
-                className="w-12 h-12 mr-2"
+                width={32} 
+                height={32}
+                className="w-8 h-8 mr-3"
               />
               <div className="flex items-center">
                 <span className="text-2xl font-bold text-slate-900">OnCall Burnout</span>
