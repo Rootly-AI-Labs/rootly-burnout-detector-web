@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import func
 
 from ...models import get_db, IntegrationMapping
 from ...auth.dependencies import get_current_active_user
@@ -705,23 +706,36 @@ async def clear_platform_mappings(
         total_deleted = user_deleted_count + integration_deleted_count
         
         if total_deleted > 0:
-            # Delete all mappings from both tables
+            # Clear GitHub usernames but keep the user records for re-mapping
+            cleared_count = 0
+            
+            # Clear target_identifier from UserMapping table (manual mappings)
             for mapping in user_mappings_to_delete:
-                db.delete(mapping)
+                if mapping.target_identifier:  # Only count if there was something to clear
+                    cleared_count += 1
+                mapping.target_identifier = None
+                mapping.mapping_successful = False
+                mapping.updated_at = func.now()
+            
+            # For IntegrationMapping table, we need to delete records entirely
+            # because they represent discovered connections that are no longer valid
             for mapping in integration_mappings_to_delete:
+                if mapping.target_identifier:  # Only count if there was something to clear
+                    cleared_count += 1
                 db.delete(mapping)
             
             db.commit()
-            logger.info(f"Successfully deleted {total_deleted} {platform} mappings ({user_deleted_count} manual + {integration_deleted_count} integration) for user {current_user.id}")
+            logger.info(f"Successfully cleared {cleared_count} {platform} usernames ({len([m for m in user_mappings_to_delete if m.target_identifier])} manual cleared + {integration_deleted_count} integration deleted) for user {current_user.id}")
             
             return {
-                "message": f"Successfully cleared {total_deleted} {platform} mappings ({user_deleted_count} manual + {integration_deleted_count} integration)",
-                "deleted_count": total_deleted,
+                "message": f"Successfully cleared {cleared_count} {platform} usernames. Platform users preserved for re-mapping.",
+                "deleted_count": cleared_count,
                 "platform": platform,
                 "breakdown": {
-                    "user_mappings_deleted": user_deleted_count,
+                    "user_mappings_cleared": len([m for m in user_mappings_to_delete if m.target_identifier]),
                     "integration_mappings_deleted": integration_deleted_count
-                }
+                },
+                "note": "Platform user records preserved - you can now re-map to organization members"
             }
         else:
             return {
