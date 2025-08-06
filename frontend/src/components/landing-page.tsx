@@ -50,9 +50,9 @@ export default function LandingPage() {
               <Image 
                 src="/images/rootly-ai-logo.png" 
                 alt="Rootly AI" 
-                width={120} 
-                height={48}
-                className="h-6 w-auto"
+                width={160} 
+                height={64}
+                className="h-8 w-auto"
               />
             </div>
           </div>
@@ -260,9 +260,9 @@ export default function LandingPage() {
                   <Image 
                     src="/images/rootly-ai-logo.png" 
                     alt="Rootly AI" 
-                    width={120} 
-                    height={48}
-                    className="h-6 w-auto opacity-80"
+                    width={160} 
+                    height={64}
+                    className="h-8 w-auto opacity-80"
                   />
                 </div>
               </div>
