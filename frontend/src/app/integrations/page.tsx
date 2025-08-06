@@ -1752,9 +1752,9 @@ export default function IntegrationsPage() {
                 </Button>
               </Link>
             )}
-            <div className="flex items-center space-x-3">
-              <h1 className="text-2xl font-bold text-slate-900">Manage Integrations</h1>
-              <div className="flex flex-col items-start -space-y-1">
+            <div className="flex items-center">
+              <span className="text-2xl font-bold text-slate-900">OnCall Burnout</span>
+              <div className="ml-2 flex flex-col items-start -space-y-1">
                 <span className="text-xs text-slate-400">powered by</span>
                 <Image 
                   src="/images/rootly-ai-logo.png" 
