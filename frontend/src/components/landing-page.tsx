@@ -262,7 +262,7 @@ export default function LandingPage() {
                     alt="Rootly AI" 
                     width={160} 
                     height={64}
-                    className="h-8 w-auto opacity-80"
+                    className="h-8 w-auto opacity-80 brightness-0 invert"
                   />
                 </div>
               </div>
