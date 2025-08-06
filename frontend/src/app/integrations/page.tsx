@@ -271,7 +271,6 @@ export default function IntegrationsPage() {
   const [integrations, setIntegrations] = useState<Integration[]>([])
   const [loadingIntegrations, setLoadingIntegrations] = useState(true)
   const [activeTab, setActiveTab] = useState<"rootly" | "pagerduty" | null>(null)
-  const [backUrl, setBackUrl] = useState<string>('/dashboard')
   const [selectedOrganization, setSelectedOrganization] = useState<string>("")
   
   // GitHub/Slack integration state
@@ -399,26 +398,6 @@ export default function IntegrationsPage() {
       setSelectedOrganization(savedOrg)
     }
     
-    // Determine back navigation based on referrer
-    const referrer = document.referrer
-    if (referrer) {
-      const referrerUrl = new URL(referrer)
-      const pathname = referrerUrl.pathname
-      
-      if (pathname.includes('/auth/success')) {
-        setBackUrl('/auth/success')
-      } else if (pathname.includes('/dashboard')) {
-        setBackUrl('/dashboard')
-      } else if (pathname === '/') {
-        setBackUrl('/')
-      } else {
-        setBackUrl('/dashboard') // default fallback
-      }
-    } else {
-      // For first-time users or direct access, start without back button
-      // Will be updated based on integration status
-      setBackUrl('')
-    }
   }, [])
 
   // Load Slack permissions when integration is available
@@ -513,15 +492,6 @@ export default function IntegrationsPage() {
       localStorage.setItem('github_integration', JSON.stringify(githubData))
       localStorage.setItem('slack_integration', JSON.stringify(slackData))
       
-      // Update back URL based on integration status
-      if (backUrl === '') {
-        // If user has no integrations, this is onboarding - don't show back button
-        // If user has integrations, they're managing them - show back to dashboard
-        if (allIntegrations.length > 0) {
-          setBackUrl('/dashboard')
-        }
-        // Otherwise keep backUrl empty to hide the back button
-      }
     } catch (error) {
       console.error('Failed to load integrations:', error)
       toast.error("Failed to load integrations. Please try refreshing the page.")
@@ -1743,15 +1713,7 @@ export default function IntegrationsPage() {
       {/* Header */}
       <header className="bg-white/80 backdrop-blur-sm border-b border-slate-200 sticky top-0 z-50">
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center space-x-4">
-            {backUrl && (
-              <Link href={backUrl}>
-                <Button variant="ghost" size="sm" className="flex items-center space-x-2">
-                  <ArrowLeft className="w-4 h-4" />
-                  <span>Back</span>
-                </Button>
-              </Link>
-            )}
+          <div className="flex items-center">
             <div className="flex items-center">
               <Image 
                 src="/images/oncall-burnout-logo.png" 
