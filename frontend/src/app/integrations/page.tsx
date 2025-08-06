@@ -1752,17 +1752,22 @@ export default function IntegrationsPage() {
                 </Button>
               </Link>
             )}
-            <div className="flex items-center">
-              <span className="text-2xl font-bold text-slate-900">OnCall Burnout</span>
-              <div className="ml-2 flex flex-col items-start -space-y-1">
-                <span className="text-xs text-slate-400">powered by</span>
-                <Image 
-                  src="/images/rootly-ai-logo.png" 
-                  alt="Rootly AI" 
-                  width={120} 
-                  height={48}
-                  className="h-6 w-auto"
-                />
+            <div className="flex items-center space-x-3">
+              <div className="w-10 h-10 bg-gradient-to-br from-purple-600 to-fuchsia-500 rounded-lg flex items-center justify-center shadow-lg">
+                <Activity className="w-6 h-6 text-white" />
+              </div>
+              <div className="flex items-center">
+                <span className="text-2xl font-bold text-slate-900">OnCall Burnout</span>
+                <div className="ml-2 flex flex-col items-start -space-y-1">
+                  <span className="text-xs text-slate-400">powered by</span>
+                  <Image 
+                    src="/images/rootly-ai-logo.png" 
+                    alt="Rootly AI" 
+                    width={120} 
+                    height={48}
+                    className="h-6 w-auto"
+                  />
+                </div>
               </div>
             </div>
           </div>
