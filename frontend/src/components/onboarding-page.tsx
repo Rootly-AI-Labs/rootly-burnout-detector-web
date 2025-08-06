@@ -2,10 +2,8 @@
 
 import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Progress } from "@/components/ui/progress"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,11 +15,7 @@ import {
 import {
   Activity,
   CheckCircle,
-  Link2,
-  Shield,
   LogOut,
-  Settings,
-  User,
   ChevronRight,
   Github,
   Chrome,
@@ -233,38 +227,7 @@ export default function OnboardingPage() {
             <p className="text-slate-600 text-lg">Let's get your team's burnout analysis set up</p>
           </div>
 
-          {/* Progress Section */}
-          <div className="mb-8">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-sm font-medium text-slate-700">Step 1 of 2: Connect Rootly</span>
-              <span className="text-sm text-slate-500">50% complete</span>
-            </div>
-            <Progress value={50} className="h-2 bg-purple-100">
-              <div className="h-full bg-gradient-to-r from-purple-600 to-fuchsia-500 rounded-full transition-all duration-300" />
-            </Progress>
-          </div>
 
-          {/* Information Card */}
-          <Card className="border-2 border-purple-200 bg-white/70 backdrop-blur-sm shadow-lg mb-8">
-            <CardContent className="p-8">
-              <div className="flex items-start space-x-4">
-                <div className="w-12 h-12 bg-gradient-to-br from-purple-600 to-fuchsia-500 rounded-lg flex items-center justify-center flex-shrink-0">
-                  <Link2 className="w-6 h-6 text-white" />
-                </div>
-                <div className="flex-1">
-                  <h2 className="text-xl font-semibold text-slate-900 mb-3">Connect Your Rootly Account</h2>
-                  <p className="text-slate-600 mb-4 leading-relaxed">
-                    To analyze your team's burnout patterns, we need access to your Rootly incident data. This helps us
-                    identify workload distribution and after-hours activity.
-                  </p>
-                  <div className="flex items-center space-x-2 text-sm text-slate-500">
-                    <Shield className="w-4 h-4 text-purple-600" />
-                    <span>Your data is processed securely and never shared with third parties</span>
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
 
           {/* Call to Action */}
           <div className="text-center space-y-4">

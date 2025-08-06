@@ -64,6 +64,11 @@ export default function AuthSuccessPage() {
             localStorage.setItem('user_provider', userData.provider || '')
             
             window.history.replaceState({}, document.title, window.location.pathname)
+            
+            // Redirect to integrations after brief delay
+            setTimeout(() => {
+              router.push('/integrations')
+            }, 1500)
           }
         } catch (error) {
           console.error('Error fetching user data:', error)
@@ -72,7 +77,7 @@ export default function AuthSuccessPage() {
     }
     
     fetchUserData()
-  }, [])
+  }, [router])
 
   const handleContinue = () => {
     router.push('/integrations')
