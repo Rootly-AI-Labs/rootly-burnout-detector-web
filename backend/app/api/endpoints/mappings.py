@@ -686,26 +686,42 @@ async def clear_platform_mappings(
         # Import UserMapping here to avoid circular imports
         from ...models.user_mapping import UserMapping
         
-        # Get all mappings for this user and platform
-        mappings_to_delete = db.query(UserMapping).filter(
+        # Get mappings from both tables for this user and platform
+        
+        # UserMapping table (manual mappings)
+        user_mappings_to_delete = db.query(UserMapping).filter(
             UserMapping.user_id == current_user.id,
             UserMapping.target_platform == platform
         ).all()
         
-        deleted_count = len(mappings_to_delete)
+        # IntegrationMapping table (auto-discovered mappings)
+        integration_mappings_to_delete = db.query(IntegrationMapping).filter(
+            IntegrationMapping.user_id == current_user.id,
+            IntegrationMapping.target_platform == platform
+        ).all()
         
-        if deleted_count > 0:
-            # Delete all mappings
-            for mapping in mappings_to_delete:
+        user_deleted_count = len(user_mappings_to_delete)
+        integration_deleted_count = len(integration_mappings_to_delete)
+        total_deleted = user_deleted_count + integration_deleted_count
+        
+        if total_deleted > 0:
+            # Delete all mappings from both tables
+            for mapping in user_mappings_to_delete:
+                db.delete(mapping)
+            for mapping in integration_mappings_to_delete:
                 db.delete(mapping)
             
             db.commit()
-            logger.info(f"Successfully deleted {deleted_count} {platform} mappings for user {current_user.id}")
+            logger.info(f"Successfully deleted {total_deleted} {platform} mappings ({user_deleted_count} manual + {integration_deleted_count} integration) for user {current_user.id}")
             
             return {
-                "message": f"Successfully cleared {deleted_count} {platform} mappings",
-                "deleted_count": deleted_count,
-                "platform": platform
+                "message": f"Successfully cleared {total_deleted} {platform} mappings ({user_deleted_count} manual + {integration_deleted_count} integration)",
+                "deleted_count": total_deleted,
+                "platform": platform,
+                "breakdown": {
+                    "user_mappings_deleted": user_deleted_count,
+                    "integration_mappings_deleted": integration_deleted_count
+                }
             }
         else:
             return {
