@@ -1752,16 +1752,14 @@ export default function IntegrationsPage() {
                 </Button>
               </Link>
             )}
-            <div className="flex items-center space-x-3">
-              <div className="w-10 h-10 bg-white rounded-lg flex items-center justify-center shadow-lg">
-                <Image 
-                  src="/images/oncall-burnout-logo.png" 
-                  alt="OnCall Burnout" 
-                  width={32} 
-                  height={32}
-                  className="w-8 h-8"
-                />
-              </div>
+            <div className="flex items-center">
+              <Image 
+                src="/images/oncall-burnout-logo.png" 
+                alt="OnCall Burnout" 
+                width={32} 
+                height={32}
+                className="w-8 h-8 mr-3"
+              />
               <div className="flex items-center">
                 <span className="text-2xl font-bold text-slate-900">OnCall Burnout</span>
                 <div className="ml-2 flex flex-col items-start -space-y-1">
