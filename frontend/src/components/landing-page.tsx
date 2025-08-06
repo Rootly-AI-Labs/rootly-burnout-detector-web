@@ -250,8 +250,14 @@ export default function LandingPage() {
         <div className="container mx-auto px-4">
           <div className="flex flex-col md:flex-row justify-between items-center">
             <div className="flex items-center space-x-3 mb-4 md:mb-0">
-              <div className="w-8 h-8 bg-gradient-to-br from-purple-600 to-purple-700 rounded-lg flex items-center justify-center">
-                <Activity className="w-5 h-5 text-white" />
+              <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center">
+                <Image 
+                  src="/images/oncall-burnout-logo.png" 
+                  alt="OnCall Burnout" 
+                  width={24} 
+                  height={24}
+                  className="w-6 h-6"
+                />
               </div>
               <div className="flex items-center">
                 <span className="text-2xl font-semibold text-white">OnCall Burnout</span>
