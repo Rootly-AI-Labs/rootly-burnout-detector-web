@@ -44,16 +44,25 @@ export default function LandingPage() {
       <header className="border-b border-slate-200 bg-white">
         <div className="container mx-auto px-4 py-2">
           <div className="flex items-center">
-            <span className="text-2xl font-bold text-slate-900">OnCall Burnout</span>
-            <div className="ml-2 flex flex-col items-start -space-y-1">
-              <span className="text-xs text-slate-400">powered by</span>
-              <Image 
-                src="/images/rootly-ai-logo.png" 
-                alt="Rootly AI" 
-                width={160} 
-                height={64}
-                className="h-8 w-auto"
-              />
+            <Image 
+              src="/images/oncall-burnout-logo.png" 
+              alt="OnCall Burnout" 
+              width={48} 
+              height={48}
+              className="w-12 h-12 mr-2"
+            />
+            <div className="flex items-center">
+              <span className="text-2xl font-bold text-slate-900">OnCall Burnout</span>
+              <div className="ml-2 flex flex-col items-start -space-y-1">
+                <span className="text-xs text-slate-400">powered by</span>
+                <Image 
+                  src="/images/rootly-ai-logo.png" 
+                  alt="Rootly AI" 
+                  width={160} 
+                  height={64}
+                  className="h-8 w-auto"
+                />
+              </div>
             </div>
           </div>
         </div>
