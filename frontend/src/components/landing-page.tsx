@@ -48,8 +48,8 @@ export default function LandingPage() {
             <div className="ml-2 flex flex-col items-start -space-y-1">
               <span className="text-xs text-slate-400">powered by</span>
               <Image 
-                src="/images/rootly-logo-branded.png" 
-                alt="Rootly" 
+                src="/images/rootly-ai-logo.png" 
+                alt="Rootly AI" 
                 width={120} 
                 height={48}
                 className="h-6 w-auto"
@@ -258,8 +258,8 @@ export default function LandingPage() {
                 <div className="ml-2 flex flex-col items-start -space-y-1">
                   <span className="text-xs text-slate-500">powered by</span>
                   <Image 
-                    src="/images/rootly-logo-branded.png" 
-                    alt="Rootly" 
+                    src="/images/rootly-ai-logo.png" 
+                    alt="Rootly AI" 
                     width={120} 
                     height={48}
                     className="h-6 w-auto opacity-80"
@@ -277,7 +277,7 @@ export default function LandingPage() {
 
           <div className="border-t border-slate-800 mt-8 pt-8 text-center">
             <p className="text-slate-400">
-              © {new Date().getFullYear()} OnCall Burnout by Rootly. Free for all engineering teams.
+              © {new Date().getFullYear()} OnCall Burnout by Rootly AI. Free for all engineering teams.
             </p>
           </div>
         </div>
