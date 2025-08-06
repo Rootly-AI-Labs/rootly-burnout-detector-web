@@ -718,3 +718,51 @@ async def clear_platform_mappings(
         db.rollback()
         logger.error(f"Error clearing {platform} mappings: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to clear {platform} mappings")
+
+@router.get("/debug-mappings", summary="Debug: Show all mappings for troubleshooting")
+async def debug_all_mappings(
+    platform: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Debug endpoint to show all mappings from both tables."""
+    try:
+        # Import UserMapping here to avoid circular imports
+        from ...models.user_mapping import UserMapping
+        
+        # Check UserMapping table
+        user_mappings = db.query(UserMapping).filter(
+            UserMapping.user_id == current_user.id,
+            UserMapping.target_platform == platform
+        ).all()
+        
+        # Check IntegrationMapping table
+        integration_mappings = db.query(IntegrationMapping).filter(
+            IntegrationMapping.user_id == current_user.id,
+            IntegrationMapping.target_platform == platform
+        ).all()
+        
+        return {
+            "user_mappings_count": len(user_mappings),
+            "integration_mappings_count": len(integration_mappings),
+            "user_mappings": [
+                {
+                    "id": m.id,
+                    "source_identifier": m.source_identifier,
+                    "target_identifier": m.target_identifier,
+                    "created_at": str(m.created_at)
+                } for m in user_mappings[:10]  # Limit to first 10
+            ],
+            "integration_mappings": [
+                {
+                    "id": m.id,
+                    "source_identifier": m.source_identifier,
+                    "target_identifier": m.target_identifier,
+                    "created_at": str(m.created_at)
+                } for m in integration_mappings[:10]  # Limit to first 10
+            ]
+        }
+        
+    except Exception as e:
+        logger.error(f"Error debugging mappings: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to debug mappings")
