@@ -1720,7 +1720,7 @@ export default function IntegrationsPage() {
                 <div className="ml-2 flex flex-col items-start -space-y-1">
                   <span className="text-xs text-slate-400">powered by</span>
                   <Image 
-                    src="/images/rootly-ai-logo.png" 
+                    src="/images/rootly-ai-logo-white.png" 
                     alt="Rootly AI" 
                     width={120} 
                     height={48}
