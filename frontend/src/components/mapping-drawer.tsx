@@ -312,7 +312,7 @@ export function MappingDrawer({ isOpen, onClose, platform, onRefresh }: MappingD
     }
     
     // Get team emails from current mappings for the progress modal
-    const teamEmails = mappingData.map(m => m.source_identifier).filter(Boolean)
+    const teamEmails = mappings.map(m => m.source_identifier).filter(Boolean)
     
     if (teamEmails.length === 0) {
       toast.error('No team members found to map')
@@ -940,7 +940,7 @@ export function MappingDrawer({ isOpen, onClose, platform, onRefresh }: MappingD
       <GitHubMappingProgressModal
         isOpen={showProgressModal}
         onClose={() => setShowProgressModal(false)}
-        teamEmails={mappingData.map(m => m.source_identifier).filter(Boolean)}
+        teamEmails={mappings.map(m => m.source_identifier).filter(Boolean)}
         onMappingComplete={handleMappingComplete}
       />
     </Sheet>

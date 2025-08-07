@@ -25,7 +25,6 @@ import {
   Search,
   X
 } from "lucide-react"
-import { ScrollArea } from "@/components/ui/scroll-area"
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -273,7 +272,7 @@ export function GitHubMappingProgressModal({
               <CardTitle className="text-sm font-medium">Detailed Progress Log</CardTitle>
             </CardHeader>
             <CardContent className="pt-0 h-full">
-              <ScrollArea className="h-64">
+              <div className="h-64 overflow-y-auto border rounded-md p-2 bg-gray-50">
                 {logs.length === 0 ? (
                   <div className="flex items-center justify-center h-32 text-gray-500">
                     {isStarting ? (
@@ -335,7 +334,7 @@ export function GitHubMappingProgressModal({
                     ))}
                   </div>
                 )}
-              </ScrollArea>
+              </div>
             </CardContent>
           </Card>
         </div>
