@@ -328,7 +328,7 @@ class EnhancedGitHubMatcher:
                                 
                                 for commit in commits:
                                     commit_email = commit.get('commit', {}).get('author', {}).get('email', '')
-                                    if commit_email.lower() == email.lower():
+                                    if commit_email and commit_email.lower() == email.lower():
                                         if commit.get('author'):
                                             username = commit['author']['login']
                                             # Verify user is in our organizations
@@ -436,13 +436,19 @@ class EnhancedGitHubMatcher:
     async def _verify_user_email(self, username: str, email: str) -> bool:
         """Verify if a GitHub user has a specific email."""
         try:
+            # Validate input email
+            if not email:
+                logger.warning(f"Email is None or empty for user {username}")
+                return False
+                
             async with aiohttp.ClientSession() as session:
                 # Check public profile
                 url = f"https://api.github.com/users/{username}"
                 async with session.get(url, headers=self.headers) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        if data.get('email', '').lower() == email.lower():
+                        user_email = data.get('email')
+                        if user_email and user_email.lower() == email.lower():
                             return True
                 
                 # Check recent commits
@@ -455,6 +461,11 @@ class EnhancedGitHubMatcher:
     async def _check_user_commits_for_email(self, username: str, email: str) -> bool:
         """Check if a user has commits with a specific email."""
         try:
+            # Validate input email
+            if not email:
+                logger.warning(f"Email is None or empty for commit check for user {username}")
+                return False
+                
             async with aiohttp.ClientSession() as session:
                 # Get user's recent events
                 events_url = f"https://api.github.com/users/{username}/events?per_page=10"
@@ -478,7 +489,7 @@ class EnhancedGitHubMatcher:
                                 commits = await resp.json()
                                 for commit in commits:
                                     commit_email = commit.get('commit', {}).get('author', {}).get('email', '')
-                                    if commit_email.lower() == email.lower():
+                                    if commit_email and commit_email.lower() == email.lower():
                                         return True
                                         
         except Exception as e:
