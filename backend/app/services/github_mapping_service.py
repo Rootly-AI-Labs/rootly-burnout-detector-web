@@ -44,7 +44,8 @@ class GitHubMappingService:
         github_token: str = None,
         user_id: Optional[int] = None,
         analysis_id: Optional[int] = None,
-        source_platform: str = "rootly"
+        source_platform: str = "rootly",
+        email_to_name: Optional[Dict[str, str]] = None
     ) -> Dict[str, Dict]:
         """
         Smart GitHub data collection with intelligent caching.
@@ -114,7 +115,7 @@ class GitHubMappingService:
         if emails_needing_mapping:
             logger.info(f"🆕 NEW MAPPINGS: Processing {len(emails_needing_mapping)} emails")
             new_results = await self._create_new_mappings(
-                emails_needing_mapping, days, github_token, user_id, analysis_id, source_platform
+                emails_needing_mapping, days, github_token, user_id, analysis_id, source_platform, email_to_name
             )
             results.update(new_results)
         
@@ -205,7 +206,8 @@ class GitHubMappingService:
         github_token: str,
         user_id: int,
         analysis_id: int,
-        source_platform: str
+        source_platform: str,
+        email_to_name: Optional[Dict[str, str]] = None
     ) -> Dict[str, Dict]:
         """Create new mappings using the enhanced GitHub collector."""
         from .enhanced_github_collector import collect_team_github_data_with_mapping
@@ -219,7 +221,8 @@ class GitHubMappingService:
                 github_token=github_token,
                 user_id=user_id,
                 analysis_id=analysis_id,
-                source_platform=source_platform
+                source_platform=source_platform,
+                email_to_name=email_to_name
             )
         except Exception as e:
             logger.error(f"Failed to create new mappings: {e}")
