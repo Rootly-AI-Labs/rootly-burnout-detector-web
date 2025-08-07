@@ -1715,13 +1715,6 @@ export default function IntegrationsPage() {
         <div className="container mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center">
             <div className="flex items-center">
-              <Image 
-                src="/images/oncall-burnout-logo.png" 
-                alt="OnCall Burnout" 
-                width={64} 
-                height={64}
-                className="w-16 h-16 mr-2"
-              />
               <div className="flex items-center">
                 <span className="text-2xl font-bold text-slate-900">OnCall Burnout</span>
                 <div className="ml-2 flex flex-col items-start -space-y-1">

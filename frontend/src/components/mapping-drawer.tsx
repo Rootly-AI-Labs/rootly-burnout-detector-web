@@ -684,7 +684,7 @@ export function MappingDrawer({ isOpen, onClose, platform, onRefresh }: MappingD
 
                 {/* Header Row */}
                 <div className="bg-gray-100 px-4 py-2 rounded-t-lg">
-                  <div className="grid grid-cols-4 gap-4 text-xs font-medium text-gray-700 uppercase tracking-wide">
+                  <div className="grid grid-cols-4 gap-4 text-xs font-medium text-gray-700 tracking-wide">
                     <div className="flex items-center space-x-1">
                       <button 
                         onClick={() => handleSort('source_identifier')}

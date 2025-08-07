@@ -44,13 +44,6 @@ export default function LandingPage() {
       <header className="border-b border-slate-200 bg-white">
         <div className="container mx-auto px-4 py-2">
           <div className="flex items-center">
-            <Image 
-              src="/images/oncall-burnout-logo.png" 
-              alt="OnCall Burnout" 
-              width={48} 
-              height={48}
-              className="w-12 h-12 mr-2"
-            />
             <div className="flex items-center">
               <span className="text-2xl font-bold text-slate-900">OnCall Burnout</span>
               <div className="ml-2 flex flex-col items-start -space-y-1">
@@ -259,13 +252,6 @@ export default function LandingPage() {
         <div className="container mx-auto px-4">
           <div className="flex flex-col md:flex-row justify-between items-center">
             <div className="flex items-center mb-4 md:mb-0">
-              <Image 
-                src="/images/oncall-burnout-logo.png" 
-                alt="OnCall Burnout" 
-                width={40} 
-                height={40}
-                className="w-10 h-10 mr-2 brightness-0 invert"
-              />
               <div className="flex items-center">
                 <span className="text-2xl font-semibold text-white">OnCall Burnout</span>
                 <div className="ml-2 flex flex-col items-start -space-y-1">
