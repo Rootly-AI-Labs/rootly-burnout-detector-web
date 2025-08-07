@@ -27,6 +27,7 @@ import {
   Trash2
 } from "lucide-react"
 import { toast } from "sonner"
+import { GitHubMappingProgressModal } from "./github-mapping-progress-modal"
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -102,6 +103,7 @@ export function MappingDrawer({ isOpen, onClose, platform, onRefresh }: MappingD
     platform?: string
   }>>([])
   const [showMappingResults, setShowMappingResults] = useState(false)
+  const [showProgressModal, setShowProgressModal] = useState(false)
 
   // Clear mappings states
   const [clearingMappings, setClearingMappings] = useState(false)
@@ -309,57 +311,30 @@ export function MappingDrawer({ isOpen, onClose, platform, onRefresh }: MappingD
       return
     }
     
-    setRunningAutoMapping(true)
-    setMappingProgress(null)
-    setMappingResults([])
+    // Get team emails from current mappings for the progress modal
+    const teamEmails = mappingData.map(m => m.source_identifier).filter(Boolean)
     
-    try {
-      const authToken = localStorage.getItem('auth_token')
-      if (!authToken) {
-        toast.error('Authentication required')
-        return
-      }
-      
-      const response = await fetch(`${API_BASE}/integrations/manual-mappings/run-github-mapping`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${authToken}`,
-          'Content-Type': 'application/json'
-        }
-      })
-      
-      if (!response.ok) {
-        const error = await response.json()
-        throw new Error(error.detail || 'Failed to run auto-mapping')
-      }
-      
-      const result = await response.json()
-      
-      setMappingProgress({
-        total: result.total_processed,
-        processed: result.total_processed,
-        mapped: result.mapped,
-        notFound: result.not_found,
-        errors: result.errors
-      })
-      
-      setMappingResults(result.results)
-      setShowMappingResults(true)
-      
-      if (result.mapped > 0) {
-        toast.success(`Successfully mapped ${result.mapped} users to GitHub`)
-        // Reload mapping data to show new mappings
-        await loadMappingData()
-      } else {
-        toast.info('No new mappings found')
-      }
-      
-    } catch (error) {
-      console.error('Error running auto-mapping:', error)
-      toast.error(error instanceof Error ? error.message : 'Failed to run auto-mapping')
-    } finally {
-      setRunningAutoMapping(false)
+    if (teamEmails.length === 0) {
+      toast.error('No team members found to map')
+      return
     }
+    
+    // Show the progress modal
+    setShowProgressModal(true)
+  }
+
+  const handleMappingComplete = async (results: any) => {
+    // Reload mapping data to show new mappings
+    await loadMappingData()
+    onRefresh?.()
+    
+    if (results?.mapped > 0) {
+      toast.success(`Successfully mapped ${results.mapped} users to GitHub`)
+    } else {
+      toast.info('Auto-mapping completed')
+    }
+    
+    setShowProgressModal(false)
   }
 
   const clearAllMappings = async () => {
@@ -960,6 +935,14 @@ export function MappingDrawer({ isOpen, onClose, platform, onRefresh }: MappingD
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* GitHub Mapping Progress Modal */}
+      <GitHubMappingProgressModal
+        isOpen={showProgressModal}
+        onClose={() => setShowProgressModal(false)}
+        teamEmails={mappingData.map(m => m.source_identifier).filter(Boolean)}
+        onMappingComplete={handleMappingComplete}
+      />
     </Sheet>
   )
 }

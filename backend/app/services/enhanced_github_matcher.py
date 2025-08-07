@@ -22,9 +22,10 @@ class EnhancedGitHubMatcher:
     6. Organization member search
     """
     
-    def __init__(self, github_token: str, organizations: List[str] = None):
+    def __init__(self, github_token: str, organizations: List[str] = None, progress_logger=None):
         self.github_token = github_token
         self.organizations = organizations or []
+        self.progress_logger = progress_logger
         self.headers = {
             'Authorization': f'token {github_token}',
             'Accept': 'application/vnd.github.v3+json',
@@ -69,6 +70,10 @@ class EnhancedGitHubMatcher:
             try:
                 logger.info(f"Trying {strategy_name} for {email}")
                 
+                # Log the strategy attempt
+                if self.progress_logger:
+                    self.progress_logger.log_mapping_strategy(email, strategy_name)
+                
                 if strategy_name == "direct_api_search":
                     result = await strategy_func(email)
                 elif strategy_name in ["exact_username_match", "fuzzy_name_match"]:
@@ -79,17 +84,35 @@ class EnhancedGitHubMatcher:
                 if result:
                     logger.info(f"✅ Found potential match via {strategy_name}: {email} -> {result}")
                     
+                    # Log successful strategy result
+                    if self.progress_logger:
+                        self.progress_logger.log_mapping_strategy(email, strategy_name, result)
+                    
                     # CRITICAL: Always verify organization membership before accepting any result
                     if await self._verify_user_in_organizations(result):
                         logger.info(f"✅ Organization verified - accepting match: {email} -> {result}")
+                        
+                        # Log successful organization verification
+                        if self.progress_logger:
+                            self.progress_logger.log_organization_verification(result, email, True, self.organizations)
+                        
                         self._email_cache[email_lower] = result
                         return result
                     else:
                         logger.warning(f"❌ Organization verification failed - rejecting match: {email} -> {result}")
+                        
+                        # Log failed organization verification
+                        if self.progress_logger:
+                            self.progress_logger.log_organization_verification(result, email, False, self.organizations)
+                        
                         continue  # Try next strategy
                     
             except Exception as e:
                 logger.error(f"Error in {strategy_name}: {e}")
+                
+                # Log strategy failure
+                if self.progress_logger:
+                    self.progress_logger.log_mapping_strategy(email, f"{strategy_name} (error: {str(e)})")
         
         logger.warning(f"❌ No GitHub match found for {email}")
         return None

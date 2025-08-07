@@ -90,7 +90,14 @@ class GitHubCollector:
             # THIRD: Use enhanced matching algorithm
             try:
                 from .enhanced_github_matcher import EnhancedGitHubMatcher
-                matcher = EnhancedGitHubMatcher(token, self.organizations)
+                from .progress_logger import GitHubMappingProgressLogger
+                
+                # Check if we have progress logging context
+                progress_logger = None
+                if hasattr(self, '_progress_logger'):
+                    progress_logger = self._progress_logger
+                
+                matcher = EnhancedGitHubMatcher(token, self.organizations, progress_logger)
                 username = await matcher.match_email_to_github(email, full_name)
                 if username:
                     logger.info(f"Found GitHub correlation via ENHANCED matching: {email} -> {username}")
