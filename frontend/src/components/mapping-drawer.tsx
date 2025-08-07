@@ -81,7 +81,7 @@ export function MappingDrawer({ isOpen, onClose, platform, onRefresh }: MappingD
   const [inlineEditingId, setInlineEditingId] = useState<number | string | null>(null)
   const [inlineEditingValue, setInlineEditingValue] = useState('')
   const [savingInlineMapping, setSavingInlineMapping] = useState(false)
-  const [githubValidation, setGithubValidation] = useState<{valid?: boolean, message?: string} | null>(null)
+  const [githubValidation, setGithubValidation] = useState<{valid?: boolean, message?: string, warning?: string} | null>(null)
   const [validatingGithub, setValidatingGithub] = useState(false)
   
   // Auto-mapping states
@@ -275,7 +275,11 @@ export function MappingDrawer({ isOpen, onClose, platform, onRefresh }: MappingD
       const data = await response.json()
       
       if (data.valid) {
-        setGithubValidation({ valid: true, message: `Valid user: ${data.name || data.username}` })
+        setGithubValidation({ 
+          valid: true, 
+          message: data.warning ? data.message : `Valid user: ${data.name || data.username}`,
+          warning: data.warning
+        })
         return true
       } else {
         setGithubValidation({ valid: false, message: data.message || 'Invalid username' })
@@ -817,6 +821,8 @@ export function MappingDrawer({ isOpen, onClose, platform, onRefresh }: MappingD
                                 className={`flex-1 px-2 py-1 text-xs border rounded focus:outline-none focus:ring-1 ${
                                   githubValidation?.valid === false 
                                     ? 'border-red-300 focus:ring-red-500' 
+                                    : githubValidation?.valid === true && githubValidation?.warning
+                                    ? 'border-orange-300 focus:ring-orange-500'
                                     : githubValidation?.valid === true
                                     ? 'border-green-300 focus:ring-green-500'
                                     : 'border-gray-300 focus:ring-blue-500'
@@ -867,7 +873,13 @@ export function MappingDrawer({ isOpen, onClose, platform, onRefresh }: MappingD
                           )}
                           
                           {platform === 'github' && inlineEditingId === mapping.id && githubValidation && (
-                            <div className={`text-xs mt-1 ${githubValidation.valid ? 'text-green-600' : 'text-red-600'}`}>
+                            <div className={`text-xs mt-1 ${
+                              githubValidation.valid === false 
+                                ? 'text-red-600' 
+                                : githubValidation.valid === true && githubValidation.warning 
+                                ? 'text-orange-600' 
+                                : 'text-green-600'
+                            }`}>
                               {validatingGithub ? 'Validating...' : githubValidation.message}
                             </div>
                           )}

@@ -539,9 +539,10 @@ async def validate_github_username(
                         if not is_org_member:
                             org_names = ", ".join(org_list)
                             return {
-                                "valid": False,
-                                "error": "Not in organization",
-                                "message": f"GitHub user '{username}' is not a member of your configured organizations: {org_names}"
+                                "valid": True,  # Allow mapping but show warning
+                                "warning": "Not in organization", 
+                                "message": f"⚠️ GitHub user '{username}' is not a member of your configured organizations ({org_names}), but mapping is allowed",
+                                "note": "User data may not be collected if they're outside your organization"
                             }
                 except Exception as e:
                     logger.warning(f"Organization verification failed, proceeding without check: {e}")
