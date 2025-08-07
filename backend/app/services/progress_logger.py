@@ -230,12 +230,32 @@ class GitHubMappingProgressLogger(ProgressLogger):
             details=f"Username: {username}, Email: {email}, Organizations checked: {organizations}"
         )
     
-    def complete_email_mapping(self, email: str, github_username: Optional[str], method: str):
+    def complete_email_mapping(self, email: str, github_username: Optional[str], method: str, github_profile: Optional[dict] = None):
         """Log the completion of mapping for a specific email."""
         if github_username:
-            message = f"✅ Successfully mapped {email} → {github_username}"
+            # Include GitHub full name if available
+            name_info = ""
+            if github_profile and github_profile.get('full_name'):
+                name_info = f" ({github_profile['full_name']})"
+            
+            message = f"✅ Successfully mapped {email} → {github_username}{name_info}"
             status = "completed"
             details = f"Mapping method: {method}"
+            
+            # Add profile details if available
+            if github_profile:
+                profile_details = []
+                if github_profile.get('full_name'):
+                    profile_details.append(f"Name: {github_profile['full_name']}")
+                if github_profile.get('company'):
+                    profile_details.append(f"Company: {github_profile['company']}")
+                if github_profile.get('location'):
+                    profile_details.append(f"Location: {github_profile['location']}")
+                if github_profile.get('bio'):
+                    profile_details.append(f"Bio: {github_profile['bio'][:100]}...")
+                
+                if profile_details:
+                    details += f" | Profile: {' | '.join(profile_details)}"
         else:
             message = f"❌ Could not map {email} to any GitHub account"
             status = "failed"
