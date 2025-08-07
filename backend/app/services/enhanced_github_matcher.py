@@ -77,9 +77,16 @@ class EnhancedGitHubMatcher:
                     result = await strategy_func(email, email_parts)
                 
                 if result:
-                    logger.info(f"✅ Found match via {strategy_name}: {email} -> {result}")
-                    self._email_cache[email_lower] = result
-                    return result
+                    logger.info(f"✅ Found potential match via {strategy_name}: {email} -> {result}")
+                    
+                    # CRITICAL: Always verify organization membership before accepting any result
+                    if await self._verify_user_in_organizations(result):
+                        logger.info(f"✅ Organization verified - accepting match: {email} -> {result}")
+                        self._email_cache[email_lower] = result
+                        return result
+                    else:
+                        logger.warning(f"❌ Organization verification failed - rejecting match: {email} -> {result}")
+                        continue  # Try next strategy
                     
             except Exception as e:
                 logger.error(f"Error in {strategy_name}: {e}")
