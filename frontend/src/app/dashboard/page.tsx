@@ -3615,34 +3615,71 @@ export default function Dashboard() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    {currentAnalysis?.analysis_data?.team_health || (currentAnalysis?.analysis_data?.team_analysis && currentAnalysis?.status === 'completed') ? (
-                      <div>
-                        <div className="space-y-1">
-                          {(currentAnalysis.analysis_data.team_health?.risk_distribution?.critical > 0 || currentAnalysis.analysis_data.team_summary?.risk_distribution?.critical > 0) && (
-                            <div className="flex items-center space-x-2">
-                              <div className="text-2xl font-bold text-red-800">{currentAnalysis.analysis_data.team_health?.risk_distribution?.critical || currentAnalysis.analysis_data.team_summary?.risk_distribution?.critical || 0}</div>
-                              <AlertTriangle className="w-6 h-6 text-red-700" />
-                              <span className="text-sm text-gray-600">Critical risk</span>
-                            </div>
-                          )}
-                          <div className="flex items-center space-x-2">
-                            <div className="text-2xl font-bold text-red-600">{currentAnalysis.analysis_data.team_health?.risk_distribution?.high || currentAnalysis.analysis_data.team_summary?.risk_distribution?.high || 0}</div>
-                            <AlertTriangle className="w-6 h-6 text-red-500" />
-                            <span className="text-sm text-gray-600">High risk</span>
+                    {currentAnalysis?.analysis_data?.team_health || (currentAnalysis?.analysis_data?.team_analysis && currentAnalysis?.status === 'completed') ? (() => {
+                      // Calculate unified risk distribution from individual member scores
+                      const members = Array.isArray(currentAnalysis.analysis_data.team_analysis) 
+                        ? currentAnalysis.analysis_data.team_analysis 
+                        : currentAnalysis.analysis_data.team_analysis?.members || [];
+                      
+                      const riskDistribution = { excellent: 0, good: 0, fair: 0, poor: 0, critical: 0 };
+                      
+                      members.forEach(member => {
+                        const burnoutScore = member.burnout_score || 0;
+                        const healthScore = (10 - burnoutScore) * 10;
+                        
+                        // Use unified thresholds
+                        if (healthScore >= 90) riskDistribution.excellent++;
+                        else if (healthScore >= 70) riskDistribution.good++;
+                        else if (healthScore >= 50) riskDistribution.fair++;
+                        else if (healthScore >= 30) riskDistribution.poor++;
+                        else riskDistribution.critical++;
+                      });
+                      
+                      const totalAtRisk = riskDistribution.poor + riskDistribution.critical;
+                      const needsAttention = riskDistribution.fair;
+                      
+                      return (
+                        <div>
+                          <div className="space-y-1">
+                            {riskDistribution.critical > 0 && (
+                              <div className="flex items-center space-x-2">
+                                <div className="text-2xl font-bold text-red-800">{riskDistribution.critical}</div>
+                                <AlertTriangle className="w-6 h-6 text-red-700" />
+                                <span className="text-sm text-gray-600">Critical risk</span>
+                              </div>
+                            )}
+                            {riskDistribution.poor > 0 && (
+                              <div className="flex items-center space-x-2">
+                                <div className="text-2xl font-bold text-red-600">{riskDistribution.poor}</div>
+                                <AlertTriangle className="w-6 h-6 text-red-500" />
+                                <span className="text-sm text-gray-600">Poor health</span>
+                              </div>
+                            )}
+                            {needsAttention > 0 && (
+                              <div className="flex items-center space-x-2">
+                                <div className="text-2xl font-bold text-orange-600">{needsAttention}</div>
+                                <div className="w-6 h-6 rounded-full bg-orange-500/20 flex items-center justify-center">
+                                  <div className="w-3 h-3 rounded-full bg-orange-500"></div>
+                                </div>
+                                <span className="text-sm text-gray-600">Needs attention</span>
+                              </div>
+                            )}
+                            {totalAtRisk === 0 && needsAttention === 0 && (
+                              <div className="flex items-center space-x-2">
+                                <div className="text-2xl font-bold text-green-600">0</div>
+                                <CheckCircle className="w-6 h-6 text-green-500" />
+                                <span className="text-sm text-gray-600">All members healthy</span>
+                              </div>
+                            )}
                           </div>
-                          <div className="flex items-center space-x-2">
-                            <div className="text-2xl font-bold text-orange-600">{currentAnalysis.analysis_data.team_health?.risk_distribution?.medium || currentAnalysis.analysis_data.team_summary?.risk_distribution?.medium || 0}</div>
-                            <div className="w-6 h-6 rounded-full bg-orange-500/20 flex items-center justify-center">
-                              <div className="w-3 h-3 rounded-full bg-orange-500"></div>
-                            </div>
-                            <span className="text-sm text-gray-600">Medium risk</span>
-                          </div>
+                          <p className="text-xs text-gray-600 mt-2">
+                            {totalAtRisk > 0 && `${totalAtRisk} at risk, `}
+                            {needsAttention > 0 && `${needsAttention} need attention, `}
+                            out of {members.length} members
+                          </p>
                         </div>
-                        <p className="text-xs text-gray-600 mt-2">
-                          Out of {Array.isArray(currentAnalysis.analysis_data.team_analysis) ? currentAnalysis.analysis_data.team_analysis.length : (currentAnalysis.analysis_data.team_analysis?.members?.length || 0)} members
-                        </p>
-                      </div>
-                    ) : (
+                      );
+                    })() : (
                       <div className="text-gray-500">
                         {currentAnalysis?.status === 'failed' ? 'Analysis failed' : 'Analysis in progress...'}
                       </div>
@@ -4597,20 +4634,20 @@ export default function Dashboard() {
                       })()}
                     </div>
                     
-                    {/* Legend/Key for bar colors */}
+                    {/* Legend/Key for bar colors - Unified Risk Levels */}
                     {chartData.length > 0 && (
                       <div className="mt-4 flex items-center justify-center space-x-3 text-xs text-gray-500">
                         <div className="flex items-center space-x-1">
                           <div className="w-3 h-3 bg-green-500 rounded"></div>
-                          <span>Good (70+)</span>
+                          <span>Healthy (70+)</span>
                         </div>
                         <div className="flex items-center space-x-1">
                           <div className="w-3 h-3 bg-yellow-500 rounded"></div>
-                          <span>Moderate (40-69)</span>
+                          <span>Needs Attention (40-69)</span>
                         </div>
                         <div className="flex items-center space-x-1">
                           <div className="w-3 h-3 bg-red-500 rounded"></div>
-                          <span>Poor (&lt;40)</span>
+                          <span>At Risk (&lt;40)</span>
                         </div>
                         <div className="flex items-center space-x-1">
                           <div className="w-3 h-3 bg-gray-300 border border-gray-400 border-dashed rounded"></div>
