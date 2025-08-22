@@ -2603,6 +2603,216 @@ export default function Dashboard() {
         }] 
       : []
   
+  // Unified 4-Level Risk System Helper Functions
+  const getUnifiedRiskLevel = (burnoutScore) => {
+    const healthScore = (10 - burnoutScore) * 10;
+    if (healthScore >= 70) return 'excellent';  // Green (70-100%)
+    if (healthScore >= 40) return 'fair';       // Yellow (40-69%)
+    if (healthScore >= 20) return 'poor';       // Orange (20-39%)
+    return 'critical';                          // Red (0-19%)
+  };
+
+  const getUnifiedRiskColor = (burnoutScore) => {
+    const riskLevel = getUnifiedRiskLevel(burnoutScore);
+    switch (riskLevel) {
+      case 'excellent': return '#10B981'; // Green
+      case 'fair': return '#F59E0B';      // Yellow
+      case 'poor': return '#F97316';      // Orange
+      case 'critical': return '#EF4444';  // Red
+      default: return '#9CA3AF';          // Grey
+    }
+  };
+
+  // Comprehensive Scoring Validation System
+  const validateDashboardConsistency = () => {
+    if (!currentAnalysis?.analysis_data) return { valid: true, checks: {} };
+    
+    const analysis = currentAnalysis.analysis_data;
+    const teamAnalysis = Array.isArray(analysis.team_analysis) ? analysis.team_analysis : (analysis.team_analysis?.members || []);
+    
+    const checks = {
+      teamHealthVsMembers: validateTeamHealthConsistency(analysis, teamAnalysis),
+      atRiskVsIndividual: validateAtRiskConsistency(analysis, teamAnalysis),
+      trendsVsCurrent: validateTrendsConsistency(analysis),
+      factorsVsOverall: validateFactorsConsistency(analysis, teamAnalysis),
+      incidentTotals: validateIncidentTotalsConsistency(analysis, teamAnalysis)
+    };
+    
+    const allValid = Object.values(checks).every(check => check.valid);
+    
+    if (!allValid) {
+      console.warn('Dashboard consistency validation failed:', checks);
+    }
+    
+    return { valid: allValid, checks };
+  };
+
+  const validateTeamHealthConsistency = (analysis, teamMembers) => {
+    // Get displayed team health score
+    const displayedScore = (() => {
+      if (analysis.daily_trends?.length > 0) {
+        const latestTrend = analysis.daily_trends[analysis.daily_trends.length - 1];
+        return Math.round((10 - latestTrend.overall_score) * 10);
+      }
+      if (analysis.team_health?.overall_score !== undefined) {
+        return Math.round((10 - analysis.team_health.overall_score) * 10);
+      }
+      return null;
+    })();
+
+    // Calculate expected score from individual members
+    const memberScores = teamMembers
+      .filter(m => m.burnout_score !== undefined && m.burnout_score > 0)
+      .map(m => (10 - m.burnout_score) * 10);
+    
+    const calculatedTeamScore = memberScores.length > 0 
+      ? Math.round(memberScores.reduce((a, b) => a + b, 0) / memberScores.length)
+      : null;
+
+    const difference = (displayedScore !== null && calculatedTeamScore !== null) 
+      ? Math.abs(displayedScore - calculatedTeamScore) 
+      : 0;
+
+    return {
+      valid: difference <= 15, // Allow 15% variance for weighted calculations
+      displayedScore,
+      calculatedTeamScore,
+      difference: difference.toFixed(1),
+      memberCount: memberScores.length
+    };
+  };
+
+  const validateAtRiskConsistency = (analysis, teamMembers) => {
+    // Get displayed at-risk count
+    const displayedAtRisk = (() => {
+      const riskDistribution = { excellent: 0, fair: 0, poor: 0, critical: 0 };
+      teamMembers.forEach(member => {
+        const burnoutScore = member.burnout_score || 0;
+        const riskLevel = getUnifiedRiskLevel(burnoutScore);
+        riskDistribution[riskLevel]++;
+      });
+      return riskDistribution.poor + riskDistribution.critical;
+    })();
+
+    // Calculate expected at-risk count from backend data
+    const backendAtRisk = analysis.team_health?.members_at_risk || 0;
+
+    // Also check individual risk classifications
+    const calculatedAtRisk = teamMembers.filter(member => {
+      const riskLevel = getUnifiedRiskLevel(member.burnout_score || 0);
+      return riskLevel === 'poor' || riskLevel === 'critical';
+    }).length;
+
+    return {
+      valid: displayedAtRisk === calculatedAtRisk,
+      displayedAtRisk,
+      calculatedAtRisk,
+      backendAtRisk,
+      difference: Math.abs(displayedAtRisk - calculatedAtRisk)
+    };
+  };
+
+  const validateTrendsConsistency = (analysis) => {
+    const dailyTrends = analysis.daily_trends || [];
+    const metadata = analysis.metadata;
+
+    // Check if we have the expected number of data points
+    const expectedDays = metadata?.days_analyzed || 30;
+    const actualDays = dailyTrends.length;
+
+    // Check if incident counts sum correctly
+    const trendsIncidentSum = dailyTrends.reduce((sum, day) => sum + (day.incident_count || 0), 0);
+    const metadataTotal = metadata?.total_incidents || 0;
+
+    return {
+      valid: actualDays >= expectedDays * 0.8 && Math.abs(trendsIncidentSum - metadataTotal) <= metadataTotal * 0.1,
+      expectedDays,
+      actualDays,
+      trendsIncidentSum,
+      metadataTotal,
+      daysCoverage: actualDays >= expectedDays * 0.8,
+      incidentSumMatch: Math.abs(trendsIncidentSum - metadataTotal) <= metadataTotal * 0.1
+    };
+  };
+
+  const validateFactorsConsistency = (analysis, teamMembers) => {
+    // Check if burnout factors exist and are reasonable
+    const membersWithFactors = teamMembers.filter(member => member.factors && Object.keys(member.factors).length > 0);
+    const membersWithScores = teamMembers.filter(member => member.burnout_score > 0);
+
+    // Factors should exist for most members with scores
+    const factorCoverage = membersWithScores.length > 0 ? (membersWithFactors.length / membersWithScores.length) : 1;
+
+    return {
+      valid: factorCoverage >= 0.7, // At least 70% of scored members should have factors
+      membersWithFactors: membersWithFactors.length,
+      membersWithScores: membersWithScores.length,
+      factorCoverage: (factorCoverage * 100).toFixed(1) + '%'
+    };
+  };
+
+  const validateIncidentTotalsConsistency = (analysis, teamMembers) => {
+    const metadata = analysis.metadata || {};
+    const metadataTotal: number = Number(metadata.total_incidents) || 0;
+
+    // Sum from team members
+    const memberIncidentSum: number = teamMembers.reduce((sum: number, member: any) => sum + (Number(member.incident_count) || 0), 0);
+
+    // Sum from daily trends
+    const dailyTrendsSum: number = (analysis.daily_trends || []).reduce((sum: number, day: any) => sum + (Number(day.incident_count) || 0), 0);
+
+    // Sum from severity breakdown
+    let severitySum: number = 0;
+    if (metadata.severity_breakdown) {
+      const values = Object.values(metadata.severity_breakdown) as any[];
+      severitySum = values.reduce((sum: number, count: any) => sum + (Number(count) || 0), 0);
+    }
+
+    const allSourcesMatch = [memberIncidentSum, dailyTrendsSum, severitySum]
+      .every((sum: number) => Math.abs(sum - metadataTotal) <= Math.max(1, metadataTotal * 0.1));
+
+    return {
+      valid: allSourcesMatch,
+      metadataTotal,
+      memberIncidentSum,
+      dailyTrendsSum,
+      severitySum,
+      maxDifference: Math.max(
+        Math.abs(memberIncidentSum - metadataTotal),
+        Math.abs(dailyTrendsSum - metadataTotal),
+        Math.abs(severitySum - metadataTotal)
+      )
+    };
+  };
+
+  // Run validation when data loads and log results
+  useEffect(() => {
+    if (currentAnalysis?.analysis_data) {
+      const validationResults = validateDashboardConsistency();
+      
+      if (!validationResults.valid) {
+        console.group('🔍 Dashboard Data Consistency Validation Results');
+        console.warn('❌ Validation failed for current analysis');
+        
+        Object.entries(validationResults.checks).forEach(([checkName, result]) => {
+          const emoji = result.valid ? '✅' : '❌';
+          console.log(`${emoji} ${checkName}:`, result);
+        });
+        
+        console.log('\n📊 Analysis ID:', currentAnalysis.id);
+        console.log('🔗 Analysis UUID:', currentAnalysis.uuid || 'N/A');
+        console.log('⏰ Created:', new Date(currentAnalysis.created_at).toLocaleString());
+        
+        console.groupEnd();
+        
+        // Show user notification about data inconsistencies
+        toast.warning('Data consistency issues detected. Check browser console for details.');
+      } else {
+        console.log('✅ Dashboard data consistency validation passed');
+      }
+    }
+  }, [currentAnalysis]);
+  
   const memberBarData = (() => {
     const teamAnalysis = currentAnalysis?.analysis_data?.team_analysis
     const members = Array.isArray(teamAnalysis) ? teamAnalysis : teamAnalysis?.members
@@ -2612,10 +2822,8 @@ export default function Dashboard() {
         name: member.user_name.split(" ")[0],
         fullName: member.user_name,
         score: (10 - member.burnout_score) * 10, // Convert 0-10 burnout to 0-100 health scale
-        riskLevel: member.risk_level,
-        fill: member.risk_level === "high" ? "#dc2626" :      // Red for high
-              member.risk_level === "medium" ? "#f59e0b" :    // Amber for medium
-              "#10b981",                                       // Green for low
+        riskLevel: getUnifiedRiskLevel(member.burnout_score),
+        fill: getUnifiedRiskColor(member.burnout_score),
       }))
       ?.sort((a, b) => b.score - a.score) // Sort by score descending (highest risk first)
       || []
@@ -3408,11 +3616,10 @@ export default function Dashboard() {
                    id="health-score-tooltip"
                    style={{ top: '-200px', left: '-200px' }}>
                 <div className="space-y-2">
-                  <div><strong className="text-green-400">Excellent (90-100%):</strong> Low stress, sustainable workload</div>
-                  <div><strong className="text-blue-400">Good (70-89%):</strong> Manageable workload with minor stress</div>
-                  <div><strong className="text-yellow-400">Fair (50-69%):</strong> Moderate stress, watch for trends</div>
-                  <div><strong className="text-orange-400">Poor (30-49%):</strong> High stress, intervention needed</div>
-                  <div><strong className="text-red-400">Critical (&lt;30%):</strong> Severe burnout risk</div>
+                  <div><strong className="text-green-400">Excellent (70-100%):</strong> Low stress, sustainable workload</div>
+                  <div><strong className="text-yellow-400">Fair (40-69%):</strong> Moderate stress, needs attention</div>
+                  <div><strong className="text-orange-400">Poor (20-39%):</strong> High stress, action needed</div>
+                  <div><strong className="text-red-400">Critical (&lt;20%):</strong> Severe burnout risk, urgent intervention</div>
                 </div>
                 <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-l-transparent border-r-transparent border-t-gray-900"></div>
               </div>
@@ -3520,13 +3727,12 @@ export default function Dashboard() {
                               currentScore = 10 - currentAnalysis.analysis_data.team_summary.average_score;
                             }
                             
-                            // Convert to health status (0-10 scale, higher=better)
-                            // Match tooltip ranges exactly: Good (70-89%), Fair (50-69%), Poor (30-49%), Critical (<30%)
-                            if (currentScore >= 9) return 'Excellent';  // 90-100%
-                            if (currentScore >= 7) return 'Good';        // 70-89% - "Manageable workload with minor stress"
-                            if (currentScore >= 5) return 'Fair';        // 50-69% - "Moderate stress, watch for trends"  
-                            if (currentScore >= 3) return 'Poor';        // 30-49% - "High stress, intervention needed"
-                            return 'Critical';                           // <30% - "Severe burnout risk"
+                            // Convert to health status using unified 4-level system
+                            // Excellent (70-100%), Fair (40-69%), Poor (20-39%), Critical (0-19%)
+                            if (currentScore >= 7) return 'Excellent';   // 70-100%
+                            if (currentScore >= 4) return 'Fair';        // 40-69%
+                            if (currentScore >= 2) return 'Poor';        // 20-39%
+                            return 'Critical';                           // 0-19%
                           })()}</div>
                           <Info className="w-3 h-3 text-purple-500" 
                                   onMouseEnter={(e) => {
@@ -3568,31 +3774,31 @@ export default function Dashboard() {
                                 currentScore = 10 - currentAnalysis.analysis_data.team_summary.average_score;
                               }
                               
-                              // Convert to health status using exact tooltip ranges: Good (70-89%), Fair (50-69%), Poor (30-49%), Critical (<30%)
-                              if (currentScore >= 9) return 'excellent';  // 90-100%
-                              if (currentScore >= 7) return 'good';       // 70-89% - "Manageable workload with minor stress"
-                              if (currentScore >= 5) return 'fair';       // 50-69% - "Moderate stress, watch for trends"
-                              if (currentScore >= 3) return 'poor';       // 30-49% - "High stress, intervention needed"
-                              return 'critical';                          // <30% - "Severe burnout risk"
+                              // Convert to health status using unified 4-level system
+                              // Excellent (70-100%), Fair (40-69%), Poor (20-39%), Critical (0-19%)
+                              if (currentScore >= 7) return 'excellent';  // 70-100%
+                              if (currentScore >= 4) return 'fair';       // 40-69%
+                              if (currentScore >= 2) return 'poor';       // 20-39%
+                              return 'critical';                          // 0-19%
                             })().toLowerCase()
                             switch(status) {
                               case 'excellent':
                                 return 'Low stress, sustainable workload'
-                              case 'good':
-                                return 'Manageable workload with minor stress'
                               case 'fair':
-                                return 'Moderate stress, watch for trends'
+                                return 'Moderate stress, needs attention'
                               case 'poor':
-                                return 'High stress, intervention needed'
+                                return 'High stress, action needed'
                               case 'critical':
-                                return 'Severe burnout risk'
+                                return 'Severe burnout risk, urgent intervention'
                               // Handle backend status values if they somehow get through
+                              case 'good':
+                                return 'Low stress, sustainable workload'  // Map old good to excellent
                               case 'healthy':
                                 return 'Low stress, sustainable workload'
                               case 'moderate':
-                                return 'Moderate stress, watch for trends'
+                                return 'Moderate stress, needs attention'
                               case 'at_risk':
-                                return 'High stress, intervention needed'
+                                return 'High stress, action needed'
                               default:
                                 return 'Measures team workload sustainability and burnout risk levels'
                             }
@@ -3621,18 +3827,12 @@ export default function Dashboard() {
                         ? currentAnalysis.analysis_data.team_analysis 
                         : currentAnalysis.analysis_data.team_analysis?.members || [];
                       
-                      const riskDistribution = { excellent: 0, good: 0, fair: 0, poor: 0, critical: 0 };
+                      const riskDistribution = { excellent: 0, fair: 0, poor: 0, critical: 0 };
                       
                       members.forEach(member => {
                         const burnoutScore = member.burnout_score || 0;
-                        const healthScore = (10 - burnoutScore) * 10;
-                        
-                        // Use unified thresholds
-                        if (healthScore >= 90) riskDistribution.excellent++;
-                        else if (healthScore >= 70) riskDistribution.good++;
-                        else if (healthScore >= 50) riskDistribution.fair++;
-                        else if (healthScore >= 30) riskDistribution.poor++;
-                        else riskDistribution.critical++;
+                        const riskLevel = getUnifiedRiskLevel(burnoutScore);
+                        riskDistribution[riskLevel]++;
                       });
                       
                       const totalAtRisk = riskDistribution.poor + riskDistribution.critical;
@@ -3666,9 +3866,9 @@ export default function Dashboard() {
                             )}
                             {totalAtRisk === 0 && needsAttention === 0 && (
                               <div className="flex items-center space-x-2">
-                                <div className="text-2xl font-bold text-green-600">0</div>
+                                <div className="text-2xl font-bold text-green-600">{riskDistribution.excellent}</div>
                                 <CheckCircle className="w-6 h-6 text-green-500" />
-                                <span className="text-sm text-gray-600">All members healthy</span>
+                                <span className="text-sm text-gray-600">All members excellent</span>
                               </div>
                             )}
                           </div>
@@ -4617,9 +4817,10 @@ export default function Dashboard() {
                                     key={`cell-${index}`} 
                                     fill={
                                       !entry.hasRealData ? '#E5E7EB' : // Grey for no-data days
-                                      entry.score >= 70 ? '#10B981' :  // Green for good health (70+)
-                                      entry.score >= 40 ? '#F59E0B' :  // Yellow for moderate health (40-69)
-                                      '#EF4444'                        // Red for poor health (<40)
+                                      entry.score >= 70 ? '#10B981' :  // Green for excellent (70+)
+                                      entry.score >= 40 ? '#F59E0B' :  // Yellow for fair (40-69)
+                                      entry.score >= 20 ? '#F97316' :  // Orange for poor (20-39)
+                                      '#EF4444'                        // Red for critical (<20)
                                     }
                                     stroke={!entry.hasRealData ? '#9CA3AF' : undefined}
                                     strokeWidth={!entry.hasRealData ? 1 : 0}
@@ -4634,20 +4835,24 @@ export default function Dashboard() {
                       })()}
                     </div>
                     
-                    {/* Legend/Key for bar colors - Unified Risk Levels */}
+                    {/* Legend/Key for bar colors - Unified 4-Level System */}
                     {chartData.length > 0 && (
                       <div className="mt-4 flex items-center justify-center space-x-3 text-xs text-gray-500">
                         <div className="flex items-center space-x-1">
                           <div className="w-3 h-3 bg-green-500 rounded"></div>
-                          <span>Healthy (70+)</span>
+                          <span>Excellent (70+)</span>
                         </div>
                         <div className="flex items-center space-x-1">
                           <div className="w-3 h-3 bg-yellow-500 rounded"></div>
-                          <span>Needs Attention (40-69)</span>
+                          <span>Fair (40-69)</span>
+                        </div>
+                        <div className="flex items-center space-x-1">
+                          <div className="w-3 h-3 bg-orange-500 rounded"></div>
+                          <span>Poor (20-39)</span>
                         </div>
                         <div className="flex items-center space-x-1">
                           <div className="w-3 h-3 bg-red-500 rounded"></div>
-                          <span>At Risk (&lt;40)</span>
+                          <span>Critical (&lt;20)</span>
                         </div>
                         <div className="flex items-center space-x-1">
                           <div className="w-3 h-3 bg-gray-300 border border-gray-400 border-dashed rounded"></div>
@@ -5260,7 +5465,7 @@ export default function Dashboard() {
                           name: member.user_name || 'Unknown',
                           email: member.user_email || '',
                           burnoutScore: ((10 - (member.burnout_score || 0)) * 10), // Convert 0-10 burnout to 0-100 health scale
-                          riskLevel: (member.risk_level || 'low') as 'high' | 'medium' | 'low',
+                          riskLevel: getUnifiedRiskLevel(member.burnout_score || 0) as 'high' | 'medium' | 'low',
                           trend: 'stable' as const,
                           incidentsHandled: member.incident_count || 0,
                           avgResponseTime: `${Math.round(member.metrics?.avg_response_time_minutes || 0)}m`,
@@ -6422,6 +6627,116 @@ export default function Dashboard() {
         platform={mappingDrawerPlatform}
         onRefresh={fetchPlatformMappings}
       />
+
+      {/* Temporary Debug Toggle Button - Only show for localhost */}
+      {(typeof window !== 'undefined' && window.location.hostname === 'localhost') && (
+        <Button
+          variant="outline"
+          size="sm"
+          className="fixed bottom-4 left-4 z-50 bg-gray-800 text-white border-gray-600"
+          onClick={() => {
+            const currentParams = new URLSearchParams(window.location.search);
+            const isDebug = currentParams.get('debug') === 'true';
+            if (isDebug) {
+              currentParams.delete('debug');
+            } else {
+              currentParams.set('debug', 'true');
+            }
+            const newUrl = `${window.location.pathname}${currentParams.toString() ? '?' + currentParams.toString() : ''}`;
+            window.history.pushState({}, '', newUrl);
+            window.location.reload();
+          }}
+        >
+          {searchParams?.get('debug') === 'true' ? 'Hide Debug' : 'Show Debug'}
+        </Button>
+      )}
+
+      {/* Developer Validation Panel - Only show for localhost or when ?debug=true */}
+      {((typeof window !== 'undefined' && window.location.hostname === 'localhost') || searchParams?.get('debug') === 'true') && currentAnalysis?.analysis_data && (
+        <div className="fixed bottom-4 right-4 z-50">
+          <Card className="w-80 max-h-96 overflow-y-auto bg-gray-900 text-white border-gray-700">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center space-x-2">
+                <Database className="h-4 w-4" />
+                <span>Data Validation</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 p-0 ml-auto text-gray-400 hover:text-white"
+                  onClick={() => {
+                    const validation = validateDashboardConsistency();
+                    console.group('🔍 Manual Dashboard Validation Check');
+                    console.log(validation);
+                    console.groupEnd();
+                  }}
+                >
+                  <RefreshCw className="h-3 w-3" />
+                </Button>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="text-xs space-y-2">
+              {(() => {
+                const validation = validateDashboardConsistency();
+                return (
+                  <>
+                    <div className={`flex items-center space-x-2 p-2 rounded ${validation.valid ? 'bg-green-900/50' : 'bg-red-900/50'}`}>
+                      <div className={`w-2 h-2 rounded-full ${validation.valid ? 'bg-green-400' : 'bg-red-400'}`} />
+                      <span className="font-medium">
+                        Overall: {validation.valid ? 'PASS' : 'FAIL'}
+                      </span>
+                    </div>
+                    {Object.entries(validation.checks).map(([check, result]) => (
+                      <div key={check} className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className={result.valid ? 'text-green-400' : 'text-red-400'}>
+                            {result.valid ? '✅' : '❌'} {check.replace(/([A-Z])/g, ' $1').toLowerCase()}
+                          </span>
+                        </div>
+                        {!result.valid && (
+                          <div className="pl-6 text-gray-400 text-xs">
+                            {check === 'teamHealthVsMembers' && (
+                              <div>
+                                Display: {(result as any).displayedScore}% vs Calc: {(result as any).calculatedTeamScore}%
+                                (diff: {(result as any).difference}%)
+                              </div>
+                            )}
+                            {check === 'atRiskVsIndividual' && (
+                              <div>
+                                Display: {(result as any).displayedAtRisk} vs Calc: {(result as any).calculatedAtRisk}
+                                (backend: {(result as any).backendAtRisk})
+                              </div>
+                            )}
+                            {check === 'trendsVsCurrent' && (
+                              <div>
+                                Days: {(result as any).actualDays}/{(result as any).expectedDays}, 
+                                Incidents: {(result as any).trendsIncidentSum}/{(result as any).metadataTotal}
+                              </div>
+                            )}
+                            {check === 'factorsVsOverall' && (
+                              <div>
+                                Factor coverage: {(result as any).factorCoverage} 
+                                ({(result as any).membersWithFactors}/{(result as any).membersWithScores})
+                              </div>
+                            )}
+                            {check === 'incidentTotals' && (
+                              <div>
+                                Max diff: {(result as any).maxDifference} from {(result as any).metadataTotal} total
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    <div className="pt-2 border-t border-gray-700 text-gray-400">
+                      Analysis {currentAnalysis.id} • {new Date(currentAnalysis.created_at).toLocaleTimeString()}
+                    </div>
+                  </>
+                )
+              })()}
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   )
 }
