@@ -1515,8 +1515,10 @@ class UnifiedBurnoutAnalyzer:
                 }
             }
         
-        users_with_data = len(github_data)
-        all_metrics = [data.get("metrics", {}) for data in github_data.values()]
+        # Fix: Filter out None values and count actual valid data
+        valid_data = [data for data in github_data.values() if data is not None and isinstance(data, dict)]
+        users_with_data = len(valid_data)
+        all_metrics = [data.get("metrics", {}) for data in valid_data]
         
         # Calculate averages
         total_commits_per_week = sum(m.get("commits_per_week", 0) for m in all_metrics)
