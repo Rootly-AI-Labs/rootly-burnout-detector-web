@@ -53,7 +53,8 @@ class UnifiedBurnoutAnalyzer:
         self.features = {
             'ai': enable_ai,
             'github': github_token is not None,
-            'slack': slack_token is not None
+            'slack': slack_token is not None,
+            'on_call_filtering': True  # Enabled - Rootly API has /v1/shifts endpoint
         }
         
         logger.info(f"UnifiedBurnoutAnalyzer initialized - Platform: {platform}, Features: {self.features}")
@@ -136,45 +137,48 @@ class UnifiedBurnoutAnalyzer:
             extraction_duration = (datetime.now() - extraction_start).total_seconds()
             logger.info(f"🔍 BURNOUT ANALYSIS: Step 2 completed in {extraction_duration:.3f}s - {len(users)} users, {len(incidents)} incidents")
             
-            # Step 2.5: Filter to only on-call users (NEW FEATURE)
-            oncall_filter_start = datetime.now()
-            logger.info(f"🔍 BURNOUT ANALYSIS: Step 2.5 - Filtering to on-call users only for {time_range_days}-day period")
-            
-            try:
-                # Get on-call schedule data for the analysis period
-                start_date = datetime.now() - timedelta(days=time_range_days)
-                end_date = datetime.now()
-                on_call_shifts = await self.client.get_on_call_shifts(start_date, end_date)
-                on_call_user_emails = await self.client.extract_on_call_users_from_shifts(on_call_shifts)
+            # Step 2.5: Filter to only on-call users (OPTIONAL FEATURE)
+            if self.features.get('on_call_filtering', False):
+                oncall_filter_start = datetime.now()
+                logger.info(f"🔍 BURNOUT ANALYSIS: Step 2.5 - Filtering to on-call users only for {time_range_days}-day period")
                 
-                logger.info(f"🗓️ ON_CALL_FILTERING: Found {len(on_call_user_emails)} users who were on-call during the {time_range_days}-day period")
-                logger.info(f"🗓️ ON_CALL_FILTERING: Total team members: {len(users)}, On-call members: {len(on_call_user_emails)}")
+                try:
+                    # Get on-call schedule data for the analysis period
+                    start_date = datetime.now() - timedelta(days=time_range_days)
+                    end_date = datetime.now()
+                    on_call_shifts = await self.client.get_on_call_shifts(start_date, end_date)
+                    on_call_user_emails = await self.client.extract_on_call_users_from_shifts(on_call_shifts)
+                    
+                    logger.info(f"🗓️ ON_CALL_FILTERING: Found {len(on_call_user_emails)} users who were on-call during the {time_range_days}-day period")
+                    logger.info(f"🗓️ ON_CALL_FILTERING: Total team members: {len(users)}, On-call members: {len(on_call_user_emails)}")
+                    
+                    if on_call_user_emails:
+                        # Filter users to only those who were on-call during the period
+                        original_user_count = len(users)
+                        filtered_users = []
+                        
+                        for user in users:
+                            user_email = self._get_user_email_from_user(user)
+                            if user_email and user_email.lower() in on_call_user_emails:
+                                filtered_users.append(user)
+                        
+                        users = filtered_users
+                        logger.info(f"🗓️ ON_CALL_FILTERING: Filtered from {original_user_count} total users to {len(users)} on-call users")
+                        
+                        # Log the on-call users for verification
+                        oncall_names = [self._get_user_name_from_user(user) for user in users]
+                        logger.info(f"🗓️ ON_CALL_FILTERING: On-call users being analyzed: {', '.join(oncall_names[:10])}{'...' if len(oncall_names) > 10 else ''}")
+                    else:
+                        logger.warning(f"🗓️ ON_CALL_FILTERING: No on-call shifts found for the period, analyzing all users as fallback")
+                        
+                except Exception as e:
+                    logger.warning(f"🗓️ ON_CALL_FILTERING: On-call shifts API not available ({str(e)[:100]}...), analyzing all users as fallback")
+                    logger.info(f"🗓️ ON_CALL_FILTERING: This is expected behavior when Rootly doesn't have an on-call scheduling API endpoint")
                 
-                if on_call_user_emails:
-                    # Filter users to only those who were on-call during the period
-                    original_user_count = len(users)
-                    filtered_users = []
-                    
-                    for user in users:
-                        user_email = self._get_user_email_from_user(user)
-                        if user_email and user_email.lower() in on_call_user_emails:
-                            filtered_users.append(user)
-                    
-                    users = filtered_users
-                    logger.info(f"🗓️ ON_CALL_FILTERING: Filtered from {original_user_count} total users to {len(users)} on-call users")
-                    
-                    # Log the on-call users for verification
-                    oncall_names = [self._get_user_name_from_user(user) for user in users]
-                    logger.info(f"🗓️ ON_CALL_FILTERING: On-call users being analyzed: {', '.join(oncall_names[:10])}{'...' if len(oncall_names) > 10 else ''}")
-                else:
-                    logger.warning(f"🗓️ ON_CALL_FILTERING: No on-call shifts found for the period, analyzing all users as fallback")
-                    
-            except Exception as e:
-                logger.error(f"🗓️ ON_CALL_FILTERING: Error fetching on-call data: {e}")
-                logger.warning(f"🗓️ ON_CALL_FILTERING: Falling back to analyzing all users (original behavior)")
-            
-            oncall_filter_duration = (datetime.now() - oncall_filter_start).total_seconds()
-            logger.info(f"🔍 BURNOUT ANALYSIS: Step 2.5 completed in {oncall_filter_duration:.3f}s - Now analyzing {len(users)} on-call users")
+                oncall_filter_duration = (datetime.now() - oncall_filter_start).total_seconds()
+                logger.info(f"🔍 BURNOUT ANALYSIS: Step 2.5 completed in {oncall_filter_duration:.3f}s - Now analyzing {len(users)} users")
+            else:
+                logger.info(f"🗓️ ON_CALL_FILTERING: Disabled - analyzing all {len(users)} users")
             
             # Log potential issues based on data patterns
             if len(users) == 0:

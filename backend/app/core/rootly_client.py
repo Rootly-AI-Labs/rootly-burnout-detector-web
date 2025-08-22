@@ -278,7 +278,7 @@ class RootlyAPIClient:
                     params['page[number]'] = page
                     
                     response = await client.get(
-                        f"{self.base_url}/shifts",
+                        f"{self.base_url}/v1/shifts",
                         headers=self.headers,
                         params=params,
                         timeout=30.0
@@ -349,7 +349,7 @@ class RootlyAPIClient:
                     for user_id in user_ids:
                         try:
                             response = await client.get(
-                                f"{self.base_url}/users/{user_id}",
+                                f"{self.base_url}/v1/users/{user_id}",
                                 headers=self.headers,
                                 timeout=10.0
                             )
