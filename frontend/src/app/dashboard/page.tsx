@@ -3538,7 +3538,7 @@ export default function Dashboard() {
                         </div>
                         <p className="text-xs text-gray-600 mt-1">
                           {(() => {
-                            const status = (currentAnalysis.analysis_data.team_health?.health_status || (() => {
+                            const status = (() => {
                               // Use the SAME score calculation logic as the percentage display for consistency
                               let currentScore = 0;
                               if (historicalTrends?.daily_trends?.length > 0) {
@@ -3559,7 +3559,7 @@ export default function Dashboard() {
                               if (currentScore >= 5) return 'fair';       // 50-69% - "Moderate stress, watch for trends"
                               if (currentScore >= 3) return 'poor';       // 30-49% - "High stress, intervention needed"
                               return 'critical';                          // <30% - "Severe burnout risk"
-                            })()).toLowerCase()
+                            })().toLowerCase()
                             switch(status) {
                               case 'excellent':
                                 return 'Low stress, sustainable workload'
@@ -3571,6 +3571,13 @@ export default function Dashboard() {
                                 return 'High stress, intervention needed'
                               case 'critical':
                                 return 'Severe burnout risk'
+                              // Handle backend status values if they somehow get through
+                              case 'healthy':
+                                return 'Low stress, sustainable workload'
+                              case 'moderate':
+                                return 'Moderate stress, watch for trends'
+                              case 'at_risk':
+                                return 'High stress, intervention needed'
                               default:
                                 return 'Measures team workload sustainability and burnout risk levels'
                             }
