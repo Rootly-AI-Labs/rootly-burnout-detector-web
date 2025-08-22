@@ -374,8 +374,9 @@ class UnifiedBurnoutAnalyzer:
             logger.info(f"Period summary calculation: team_overall_score={team_overall_score}, period_average_score={period_average_score}")
             logger.info(f"Team health keys: {list(team_health.keys()) if team_health else 'None'}")
             
-            # Generate daily trends from incident data
-            daily_trends = self._generate_daily_trends(incidents, team_analysis["members"], metadata, team_health)
+            # Generate daily trends from incident data - with null safety
+            team_members = team_analysis.get("members", []) if team_analysis and isinstance(team_analysis, dict) else []
+            daily_trends = self._generate_daily_trends(incidents, team_members, metadata, team_health)
             logger.info(f"🔍 MAIN_ANALYSIS_DEBUG: Generated {len(daily_trends)} daily trends for final result")
             
             result = {
@@ -412,7 +413,10 @@ class UnifiedBurnoutAnalyzer:
                     github_members_by_risk = {"low": 0, "medium": 0, "high": 0}
                     github_members_details = []
                     
-                    for member in result.get("team_analysis", {}).get("members", []):
+                    # Safe chained access to avoid NoneType error
+                    team_analysis_data = result.get("team_analysis") if result else None
+                    members_list = team_analysis_data.get("members", []) if team_analysis_data and isinstance(team_analysis_data, dict) else []
+                    for member in members_list:
                         github_activity = member.get("github_activity", {})
                         github_indicators = github_activity.get("burnout_indicators", {})
                         if any(github_indicators.values()):
@@ -823,8 +827,9 @@ class UnifiedBurnoutAnalyzer:
         if github_data and github_data.get("activity_data"):
             result["github_activity"] = github_data["activity_data"]
             
-            # Check if GitHub activity indicates high risk
-            github_indicators = github_data.get("activity_data", {}).get("burnout_indicators", {})
+            # Check if GitHub activity indicates high risk - safe chained access
+            activity_data = github_data.get("activity_data") if github_data else None
+            github_indicators = activity_data.get("burnout_indicators", {}) if activity_data and isinstance(activity_data, dict) else {}
             has_github_risk_indicators = any([
                 github_indicators.get("excessive_commits", False),
                 github_indicators.get("late_night_activity", False),
