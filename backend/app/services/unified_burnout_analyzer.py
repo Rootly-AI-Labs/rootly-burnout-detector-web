@@ -693,7 +693,7 @@ class UnifiedBurnoutAnalyzer:
                     incident_users.add(str(assigned_to["id"]))
             else:
                 # Rootly format
-                attrs = incident.get("attributes", {}) if incident else {}
+                attrs = incident.get("attributes", {}) if incident and isinstance(incident, dict) else {}
                 
                 # Extract all users involved in the incident with comprehensive null safety
                 # Creator/Reporter
@@ -741,10 +741,10 @@ class UnifiedBurnoutAnalyzer:
             user_email = user.get("email")
         else:
             # Rootly API structure
-            user_attrs = user.get("attributes", {})
-            user_id = user.get("id")
-            user_name = user_attrs.get("full_name") or user_attrs.get("name", "Unknown")
-            user_email = user_attrs.get("email")
+            user_attrs = user.get("attributes", {}) if user and isinstance(user, dict) else {}
+            user_id = user.get("id") if user and isinstance(user, dict) else None
+            user_name = user_attrs.get("full_name") or user_attrs.get("name", "Unknown") if user_attrs else "Unknown"
+            user_email = user_attrs.get("email") if user_attrs else None
         
         # If no incidents, return minimal analysis
         if not incidents:
@@ -903,13 +903,13 @@ class UnifiedBurnoutAnalyzer:
                 status = incident.get("status", "unknown")
             else:
                 # Rootly format
-                attrs = incident.get("attributes", {})
-                created_at = attrs.get("created_at")
-                acknowledged_at = attrs.get("started_at")
+                attrs = incident.get("attributes", {}) if incident and isinstance(incident, dict) else {}
+                created_at = attrs.get("created_at") if attrs else None
+                acknowledged_at = attrs.get("started_at") if attrs else None
                 
                 # Severity with null safety
                 severity = "unknown"
-                severity_data = attrs.get("severity")
+                severity_data = attrs.get("severity") if attrs else None
                 if severity_data and isinstance(severity_data, dict):
                     data = severity_data.get("data")
                     if data and isinstance(data, dict):
@@ -920,7 +920,7 @@ class UnifiedBurnoutAnalyzer:
                                 severity = name.lower()
                 
                 # Status with null safety
-                status = attrs.get("status", "unknown")
+                status = attrs.get("status", "unknown") if attrs else "unknown"
             
             # Count status
             status_counts[status] += 1
@@ -1773,7 +1773,7 @@ class UnifiedBurnoutAnalyzer:
             # PRE-INITIALIZE individual_daily_data with all team members
             # This is critical - users must exist in the structure before incident processing
             for user in team_analysis:
-                if user.get('user_email'):  # team_analysis uses user_email, not email
+                if user and isinstance(user, dict) and user.get('user_email'):  # team_analysis uses user_email, not email
                     user_key = user['user_email'].lower()
                     individual_daily_data[user_key] = {}
                     
@@ -1805,7 +1805,7 @@ class UnifiedBurnoutAnalyzer:
                         if self.platform == "pagerduty":
                             created_at = incident.get("created_at")
                         else:  # Rootly
-                            attrs = incident.get("attributes", {})
+                            attrs = incident.get("attributes", {}) if incident and isinstance(incident, dict) else {}
                             if attrs and isinstance(attrs, dict):
                                 created_at = attrs.get("created_at")
                         
@@ -1838,7 +1838,7 @@ class UnifiedBurnoutAnalyzer:
                                     severity_weight = 2.0
                                     daily_data[date_str]["high_severity_count"] += 1
                             else:  # Rootly
-                                attrs = incident.get("attributes", {})
+                                attrs = incident.get("attributes", {}) if incident and isinstance(incident, dict) else {}
                                 severity_info = attrs.get("severity", {}) if attrs else {}
                                 if isinstance(severity_info, dict) and "data" in severity_info:
                                     severity_data = severity_info.get("data", {})
@@ -1879,7 +1879,7 @@ class UnifiedBurnoutAnalyzer:
                                         daily_data[date_str]["users_involved"].add(user_id)
                             else:  # Rootly
                                 # Rootly format
-                                attrs = incident.get("attributes", {})
+                                attrs = incident.get("attributes", {}) if incident and isinstance(incident, dict) else {}
                                 if attrs:
                                     user_info = attrs.get("user", {})
                                     if isinstance(user_info, dict) and "data" in user_info:
