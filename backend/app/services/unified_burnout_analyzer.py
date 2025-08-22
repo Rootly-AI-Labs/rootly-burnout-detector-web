@@ -1546,6 +1546,9 @@ class UnifiedBurnoutAnalyzer:
         high_risk_github_members = []
         
         for email, data in github_data.items():
+            # Skip None values in GitHub data
+            if data is None or not isinstance(data, dict):
+                continue
             indicators = data.get("burnout_indicators", {})
             has_high_risk_indicator = False
             
@@ -1570,6 +1573,9 @@ class UnifiedBurnoutAnalyzer:
         # Top contributors (top 5 by commits)
         contributors = []
         for email, data in github_data.items():
+            # Skip None values in GitHub data
+            if data is None or not isinstance(data, dict):
+                continue
             metrics = data.get("metrics", {})
             contributors.append({
                 "email": email,
@@ -1632,8 +1638,10 @@ class UnifiedBurnoutAnalyzer:
                 }
             }
         
-        users_with_data = len(slack_data)
-        all_metrics = [data.get("metrics", {}) for data in slack_data.values()]
+        # Fix: Filter out None values from slack_data
+        valid_data = [data for data in slack_data.values() if data is not None and isinstance(data, dict)]
+        users_with_data = len(valid_data)
+        all_metrics = [data.get("metrics", {}) for data in valid_data]
         
         # Calculate averages
         total_messages_per_day = sum(m.get("messages_per_day", 0) for m in all_metrics)
@@ -1654,6 +1662,9 @@ class UnifiedBurnoutAnalyzer:
         # Count unique channels
         all_channels = set()
         for data in slack_data.values():
+            # Skip None values in Slack data
+            if data is None or not isinstance(data, dict):
+                continue
             metrics = data.get("metrics", {})
             channel_count = metrics.get("channel_diversity", 0)
             # This is an approximation since we don't have actual channel IDs
@@ -1668,6 +1679,9 @@ class UnifiedBurnoutAnalyzer:
         }
         
         for data in slack_data.values():
+            # Skip None values in Slack data
+            if data is None or not isinstance(data, dict):
+                continue
             indicators = data.get("burnout_indicators", {})
             for key in burnout_counts:
                 if indicators.get(key, False):
