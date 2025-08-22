@@ -1753,35 +1753,13 @@ class UnifiedBurnoutAnalyzer:
     
     def _format_incidents_for_ai(self, member_analysis: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
-        Format incident data for AI analysis.
-        
-        Args:
-            member_analysis: Member analysis containing incident metrics
-            
-        Returns:
-            List of incident dictionaries formatted for AI
+        Return empty incidents list to prevent artificial data generation.
+        AI analysis will work with metrics and factors only.
         """
-        # Since we don't store raw incident data in member analysis,
-        # we'll create approximated incident data based on the metrics
-        incidents = []
-        
-        # Extract basic metrics
         incident_count = member_analysis.get("incident_count", 0)
-        factors = member_analysis.get("factors", {})
-        metrics = member_analysis.get("metrics", {})
+        logger.info(f"AI analysis using {incident_count} incident metrics only")
         
-        # Create approximated incident entries based on patterns
-        # This is a simplified approach - in a full implementation,
-        # we'd want to store the raw incident data
-        
-        # Remove artificial incident generation to prevent flat-line health trends
-        # The synthetic incidents were creating identical daily patterns causing
-        # health scores to be consistently 7.8 (78%) instead of realistic variation
-        
-        # Return empty incidents list - AI analysis will work with metrics only
-        logger.info(f"📊 DATA_INTEGRITY: Returning {incident_count} incident metrics without synthetic generation")
-        
-        return incidents
+        return []
 
     def _generate_daily_trends(self, incidents: List[Dict[str, Any]], team_analysis: List[Dict[str, Any]], metadata: Dict[str, Any], team_health: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         """Generate daily trend data from incidents and team analysis - includes individual user daily tracking."""

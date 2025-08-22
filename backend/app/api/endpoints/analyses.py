@@ -572,97 +572,12 @@ async def regenerate_analysis_trends(
                 detail="Analysis missing required metadata or team_analysis data"
             )
         
-        # Generate daily trends from existing analysis data
-        logger.info(f"Regenerating daily trends for analysis {analysis_id}")
+        logger.info(f"Refusing to regenerate artificial daily trends for analysis {analysis_id}")
         
-        # Get time range from metadata or analysis record
-        time_range_days = metadata.get("days_analyzed", analysis.time_range or 30)
-        total_incidents = metadata.get("total_incidents", 0)
-        
-        # Create daily trends data based on existing analysis results
-        from datetime import datetime, timedelta
-        import random
-        
-        # If we have team members with incidents, distribute them across days
-        members = team_analysis.get("members", [])
-        if isinstance(team_analysis, list):
-            members = team_analysis
-        
-        # Calculate some basic metrics from existing data
-        total_members = len(members)
-        members_with_incidents = [m for m in members if m.get("incident_count", 0) > 0]
-        avg_burnout_score = sum(m.get("burnout_score", 0) for m in members) / max(total_members, 1)
-        
-        # Generate daily trends
-        daily_trends = []
-        end_date = datetime.now()
-        incidents_distributed = 0
-        
-        for i in range(time_range_days):
-            current_date = end_date - timedelta(days=time_range_days - 1 - i)
-            
-            # Distribute incidents across days (more realistic than 1 per day)
-            if total_incidents > 0 and i < total_incidents:
-                # Create a more realistic distribution
-                if i < total_incidents:
-                    incidents_for_day = min(
-                        max(1, total_incidents // time_range_days + random.randint(-1, 2)),
-                        total_incidents - incidents_distributed
-                    )
-                else:
-                    incidents_for_day = 0
-            else:
-                incidents_for_day = 0
-            
-            incidents_distributed += incidents_for_day
-            
-            # Calculate health score based on burnout analysis
-            # Higher incident days = lower health scores
-            base_score = avg_burnout_score / 10  # Convert to 0-10 scale
-            if incidents_for_day > 5:
-                daily_score = max(0.3, base_score - 0.2)
-            elif incidents_for_day > 2:
-                daily_score = max(0.4, base_score - 0.1)
-            elif incidents_for_day > 0:
-                daily_score = base_score
-            else:
-                daily_score = min(1.0, base_score + 0.1)
-            
-            members_at_risk = len([m for m in members_with_incidents if m.get("risk_level") in ["high", "critical"]])
-            
-            daily_trends.append({
-                "date": current_date.strftime("%Y-%m-%d"),
-                "overall_score": round(daily_score, 2),
-                "incident_count": incidents_for_day,
-                "members_at_risk": members_at_risk,
-                "total_members": total_members,
-                "health_status": "critical" if daily_score < 0.4 else "at_risk" if daily_score < 0.6 else "moderate" if daily_score < 0.8 else "healthy"
-            })
-        
-        # Ensure we distributed all incidents
-        remaining_incidents = total_incidents - incidents_distributed
-        if remaining_incidents > 0:
-            # Add remaining incidents to random days
-            for _ in range(remaining_incidents):
-                random_day = random.randint(0, len(daily_trends) - 1)
-                daily_trends[random_day]["incident_count"] += 1
-        
-        # Update analysis data with daily trends
-        analysis_data["daily_trends"] = daily_trends
-        
-        # Save back to database
-        analysis.results = analysis_data
-        db.commit()
-        
-        logger.info(f"Successfully regenerated {len(daily_trends)} daily trends for analysis {analysis_id}")
-        
-        return {
-            "message": "Daily trends regenerated successfully",
-            "trends_count": len(daily_trends),
-            "regenerated": True,
-            "total_incidents_distributed": sum(d["incident_count"] for d in daily_trends),
-            "date_range": f"{daily_trends[0]['date']} to {daily_trends[-1]['date']}"
-        }
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Artificial daily trends generation disabled. Only real data from actual incidents should be used."
+        )
         
     except Exception as e:
         logger.error(f"Failed to regenerate trends for analysis {analysis_id}: {str(e)}")

@@ -232,7 +232,7 @@ class SlackCollector:
         
         if not messages_file:
             logger.warning(f"No mock message file found for user {user_id}")
-            return self._generate_mock_slack_data(user_id, email, start_date, end_date)
+            return None
         
         try:
             with open(messages_file) as f:
@@ -252,7 +252,7 @@ class SlackCollector:
         
         except Exception as e:
             logger.error(f"Error reading mock data for {user_id}: {e}")
-            return self._generate_mock_slack_data(user_id, email, start_date, end_date)
+            return None
     
     def _process_mock_messages(self, messages: List[Dict], user_id: str, email: str, start_date: datetime, end_date: datetime) -> Dict:
         """Process mock messages using the same logic as original detector."""
@@ -848,8 +848,9 @@ class SlackCollector:
                 
         except Exception as e:
             logger.error(f"Error fetching real Slack data for {user_id}: {e}")
-            # Fall back to mock data
-            return self._generate_mock_slack_data(user_id, email, start_date, end_date)
+            # Return None instead of artificial data
+            logger.info(f"📊 NO_ARTIFICIAL_DATA: Slack API failed for {user_id}, returning None")
+            return None
         
     async def collect_slack_data_for_user(self, user_identifier: str, days: int = 30, slack_token: str = None, mock_mode: bool = False, is_name: bool = False) -> Optional[Dict]:
         """
@@ -890,81 +891,22 @@ class SlackCollector:
             logger.info(f"Using real Slack API for {slack_user_id} with token: {slack_token[:10]}...")
             return await self._fetch_real_slack_data(slack_user_id, user_identifier, start_date, end_date, slack_token, "T08DD2M7F")
         else:
-            # Fall back to generated mock data for testing
-            logger.warning(f"No Slack token, using generated mock data for {slack_user_id}")
-            return self._generate_mock_slack_data(slack_user_id, user_identifier, start_date, end_date)
+            # Return None instead of artificial data
+            logger.warning(f"📊 NO_ARTIFICIAL_DATA: No Slack token for {slack_user_id}, returning None")
+            return None
     
     def _generate_mock_slack_data(self, slack_user_id: str, email: str, start_date: datetime, end_date: datetime) -> Dict:
-        """Generate realistic mock Slack data for testing."""
+        """
+        NO ARTIFICIAL DATA GENERATION.
         
-        import random
-        
+        Return None to indicate no data available when Slack API fails.
+        This prevents artificial data from corrupting health trend calculations.
+        """
         days_analyzed = (end_date - start_date).days
+        logger.info(f"📊 NO_ARTIFICIAL_DATA: Slack API failed for {slack_user_id}, returning None instead of mock data")
         
-        # Base activity levels (some users more active than others)
-        activity_multiplier = random.choice([0.5, 0.8, 1.0, 1.2, 1.5])
-        
-        # Generate message activity
-        total_messages = int(random.randint(100, 800) * activity_multiplier)
-        after_hours_messages = int(total_messages * random.uniform(0.1, 0.3))
-        weekend_messages = int(total_messages * random.uniform(0.05, 0.2))
-        
-        # Calculate daily averages
-        messages_per_day = total_messages / days_analyzed if days_analyzed > 0 else 0
-        
-        # Calculate percentages
-        after_hours_percentage = (after_hours_messages / total_messages) if total_messages > 0 else 0
-        weekend_percentage = (weekend_messages / total_messages) if total_messages > 0 else 0
-        
-        # Generate other metrics
-        channels_active = random.randint(3, 15)
-        avg_response_time = random.randint(15, 120)  # minutes
-        sentiment_score = random.uniform(-0.2, 0.3)  # Slightly positive on average
-        
-        # Generate burnout indicators
-        burnout_indicators = {
-            "excessive_messaging": messages_per_day > 50,
-            "poor_sentiment": sentiment_score < -0.1,
-            "late_responses": avg_response_time > 60,
-            "after_hours_activity": after_hours_percentage > 0.25
-        }
-        
-        return {
-            'user_id': slack_user_id,
-            'email': email,
-            'analysis_period': {
-                'start': start_date.isoformat(),
-                'end': end_date.isoformat(),
-                'days': days_analyzed
-            },
-            'metrics': {
-                'total_messages': total_messages,
-                'messages_per_day': round(messages_per_day, 1),
-                'after_hours_percentage': round(after_hours_percentage, 3),
-                'weekend_percentage': round(weekend_percentage, 3),
-                'channel_diversity': channels_active,
-                'dm_ratio': random.uniform(0.1, 0.3),
-                'thread_participation_rate': random.uniform(0.2, 0.6),
-                'avg_message_length': random.randint(20, 80),
-                'peak_hour_concentration': random.uniform(0.3, 0.7),
-                'response_pattern_score': random.uniform(3.0, 8.0),
-                'avg_sentiment': round(sentiment_score, 3),
-                'negative_sentiment_ratio': random.uniform(0.1, 0.3),
-                'positive_sentiment_ratio': random.uniform(0.3, 0.6),
-                'stress_indicator_ratio': random.uniform(0.05, 0.2),
-                'sentiment_volatility': random.uniform(0.1, 0.4)
-            },
-            'burnout_indicators': burnout_indicators,
-            'activity_data': {
-                'messages_sent': total_messages,
-                'channels_active': channels_active,
-                'after_hours_messages': after_hours_messages,
-                'weekend_messages': weekend_messages,
-                'avg_response_time_minutes': avg_response_time,
-                'sentiment_score': round(sentiment_score, 3),
-                'burnout_indicators': burnout_indicators
-            }
-        }
+        # Return None instead of artificial data
+        return None
     
     def _is_business_hours(self, dt: datetime) -> bool:
         """Check if datetime is within business hours."""
@@ -992,8 +934,8 @@ async def collect_team_slack_data(team_identifiers: List[str], days: int = 30, s
     slack_data = {}
     
     if not slack_token:
-        logger.warning("No Slack token provided, using mock data for all users")
-        # Fall back to individual processing for mock data
+        logger.warning("📊 NO_ARTIFICIAL_DATA: No Slack token provided, returning empty data for all users")
+        # Return empty dict instead of artificial data
         for identifier in team_identifiers:
             try:
                 user_data = await collector.collect_slack_data_for_user(identifier, days, slack_token, mock_mode, use_names)

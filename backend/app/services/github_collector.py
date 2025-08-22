@@ -564,80 +564,15 @@ class GitHubCollector:
             logger.info(f"Using real GitHub API for {github_username} with token: {github_token[:10]}...")
             return await self._fetch_real_github_data(github_username, user_email, start_date, end_date, github_token)
         else:
-            # No GitHub token available, use mock data for now
-            logger.warning(f"No GitHub token available for {github_username}, using mock data")
-            return self._generate_mock_github_data(github_username, user_email, start_date, end_date)
+            logger.warning(f"No GitHub token available for {github_username}, returning None")
+            return None
     
     def _generate_mock_github_data(self, username: str, email: str, start_date: datetime, end_date: datetime) -> Dict:
-        """Generate realistic mock GitHub data for testing."""
-        
-        # Generate some realistic activity
-        import random
-        
+        """Return None to indicate no data available when GitHub API fails."""
         days_analyzed = (end_date - start_date).days
+        logger.info(f"GitHub API failed for {username}, returning None")
         
-        # Base activity levels (some users more active than others)
-        activity_multiplier = random.choice([0.5, 0.8, 1.0, 1.2, 1.5])
-        
-        # Generate commits
-        total_commits = int(random.randint(10, 50) * activity_multiplier)
-        after_hours_commits = int(total_commits * random.uniform(0.1, 0.3))
-        weekend_commits = int(total_commits * random.uniform(0.05, 0.2))
-        
-        # Generate PRs
-        total_prs = int(random.randint(2, 15) * activity_multiplier)
-        
-        # Generate reviews
-        total_reviews = int(random.randint(5, 25) * activity_multiplier)
-        
-        # Calculate weekly averages
-        weeks = days_analyzed / 7
-        commits_per_week = total_commits / weeks if weeks > 0 else 0
-        prs_per_week = total_prs / weeks if weeks > 0 else 0
-        
-        # Calculate percentages
-        after_hours_percentage = (after_hours_commits / total_commits) if total_commits > 0 else 0
-        weekend_percentage = (weekend_commits / total_commits) if total_commits > 0 else 0
-        
-        # Generate burnout indicators
-        burnout_indicators = {
-            "excessive_commits": commits_per_week > 15,
-            "late_night_activity": after_hours_percentage > 0.25,
-            "weekend_work": weekend_percentage > 0.15,
-            "large_prs": random.choice([True, False])  # Simplified
-        }
-        
-        return {
-            'username': username,
-            'email': email,
-            'analysis_period': {
-                'start': start_date.isoformat(),
-                'end': end_date.isoformat(),
-                'days': days_analyzed
-            },
-            'metrics': {
-                'total_commits': total_commits,
-                'total_pull_requests': total_prs,
-                'total_reviews': total_reviews,
-                'commits_per_week': round(commits_per_week, 2),
-                'prs_per_week': round(prs_per_week, 2),
-                'after_hours_commit_percentage': round(after_hours_percentage, 3),
-                'weekend_commit_percentage': round(weekend_percentage, 3),
-                'repositories_touched': random.randint(2, 8),
-                'avg_pr_size': random.randint(50, 300),
-                'clustered_commits': random.randint(0, 5)
-            },
-            'burnout_indicators': burnout_indicators,
-            'activity_data': {
-                'commits_count': total_commits,
-                'pull_requests_count': total_prs,
-                'reviews_count': total_reviews,
-                'after_hours_commits': after_hours_commits,
-                'weekend_commits': weekend_commits,
-                'avg_pr_size': random.randint(50, 300),
-                'burnout_indicators': burnout_indicators
-            }
-        }
+        return None
     
     def _is_business_hours(self, dt: datetime) -> bool:
         """Check if datetime is within business hours."""
