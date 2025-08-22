@@ -3435,19 +3435,23 @@ export default function Dashboard() {
                               // Use the latest point from health trends for consistency with chart
                               if (historicalTrends?.daily_trends?.length > 0) {
                                 const latestTrend = historicalTrends.daily_trends[historicalTrends.daily_trends.length - 1];
-                                return `${Math.round(latestTrend.overall_score * 10)}%`;
+                                // Convert burnout score (0-10) to health score (0-100): health = (10 - burnout) * 10
+                                return `${Math.round((10 - latestTrend.overall_score) * 10)}%`;
                               }
                               // Fallback to current analysis daily trends if available
                               if (currentAnalysis?.analysis_data?.daily_trends?.length > 0) {
                                 const latestTrend = currentAnalysis.analysis_data.daily_trends[currentAnalysis.analysis_data.daily_trends.length - 1];
-                                return `${Math.round(latestTrend.overall_score * 10)}%`;
+                                // Convert burnout score (0-10) to health score (0-100): health = (10 - burnout) * 10
+                                return `${Math.round((10 - latestTrend.overall_score) * 10)}%`;
                               }
                               // Show real data from team_health if available
                               if (currentAnalysis?.analysis_data?.team_health) {
-                                return `${Math.round(currentAnalysis.analysis_data.team_health.overall_score * 10)}%`;
+                                // Convert burnout score (0-10) to health score (0-100): health = (10 - burnout) * 10
+                                return `${Math.round((10 - currentAnalysis.analysis_data.team_health.overall_score) * 10)}%`;
                               }
                               if (currentAnalysis?.analysis_data?.team_summary) {
-                                return `${Math.round(currentAnalysis.analysis_data.team_summary.average_score * 10)}%`;
+                                // Convert burnout score (0-10) to health score (0-100): health = (10 - burnout) * 10
+                                return `${Math.round((10 - currentAnalysis.analysis_data.team_summary.average_score) * 10)}%`;
                               }
                               // NO FALLBACK DATA - show actual system state
                               return "No data";
@@ -3469,21 +3473,24 @@ export default function Dashboard() {
                                 if (historicalTrends?.daily_trends?.length > 0) {
                                   const dailyScores = historicalTrends.daily_trends.map((d: any) => d.overall_score);
                                   const average = dailyScores.reduce((a: number, b: number) => a + b, 0) / dailyScores.length;
-                                  console.log("Debug - calculated average from historicalTrends daily_trends:", average * 10);
-                                  return `${Math.round(average * 10)}%`; // Convert 0-10 to 0-100%
+                                  // Convert burnout average (0-10) to health average (0-100): health = (10 - burnout) * 10
+                                  console.log("Debug - calculated average from historicalTrends daily_trends:", (10 - average) * 10);
+                                  return `${Math.round((10 - average) * 10)}%`;
                                 }
                                 // Fallback: Calculate from current analysis daily trends
                                 if (currentAnalysis?.analysis_data?.daily_trends?.length > 0) {
                                   const dailyScores = currentAnalysis.analysis_data.daily_trends.map((d: any) => d.overall_score);
                                   const average = dailyScores.reduce((a: number, b: number) => a + b, 0) / dailyScores.length;
-                                  console.log("Debug - calculated average from currentAnalysis daily_trends:", average * 10);
-                                  return `${Math.round(average * 10)}%`; // Convert 0-10 to 0-100%
+                                  // Convert burnout average (0-10) to health average (0-100): health = (10 - burnout) * 10
+                                  console.log("Debug - calculated average from currentAnalysis daily_trends:", (10 - average) * 10);
+                                  return `${Math.round((10 - average) * 10)}%`;
                                 }
                                 // Use current score if daily trends are empty but historical available
                                 if (historicalTrends?.daily_trends?.length > 0) {
                                   const latestTrend = historicalTrends.daily_trends[historicalTrends.daily_trends.length - 1];
-                                  console.log("Debug - using latest trend:", latestTrend.overall_score * 10);
-                                  return `${Math.round(latestTrend.overall_score * 10)}%`;
+                                  // Convert burnout score (0-10) to health score (0-100): health = (10 - burnout) * 10
+                                  console.log("Debug - using latest trend:", (10 - latestTrend.overall_score) * 10);
+                                  return `${Math.round((10 - latestTrend.overall_score) * 10)}%`;
                                 }
                                 console.log("Debug - no data available for average");
                                 return "No data";
@@ -3499,14 +3506,18 @@ export default function Dashboard() {
                             
                             if (historicalTrends?.daily_trends?.length > 0) {
                               const latestTrend = historicalTrends.daily_trends[historicalTrends.daily_trends.length - 1];
-                              currentScore = latestTrend.overall_score;
+                              // Convert burnout score (0-10) to health score (0-10): health = 10 - burnout
+                              currentScore = 10 - latestTrend.overall_score;
                             } else if (currentAnalysis?.analysis_data?.daily_trends?.length > 0) {
                               const latestTrend = currentAnalysis.analysis_data.daily_trends[currentAnalysis.analysis_data.daily_trends.length - 1];
-                              currentScore = latestTrend.overall_score;
+                              // Convert burnout score (0-10) to health score (0-10): health = 10 - burnout
+                              currentScore = 10 - latestTrend.overall_score;
                             } else if (currentAnalysis?.analysis_data?.team_health) {
-                              currentScore = currentAnalysis.analysis_data.team_health.overall_score;
+                              // Convert burnout score (0-10) to health score (0-10): health = 10 - burnout
+                              currentScore = 10 - currentAnalysis.analysis_data.team_health.overall_score;
                             } else if (currentAnalysis?.analysis_data?.team_summary) {
-                              currentScore = currentAnalysis.analysis_data.team_summary.average_score;
+                              // Convert burnout score (0-10) to health score (0-10): health = 10 - burnout
+                              currentScore = 10 - currentAnalysis.analysis_data.team_summary.average_score;
                             }
                             
                             // Convert to health status (0-10 scale, higher=better)
@@ -3543,14 +3554,18 @@ export default function Dashboard() {
                               let currentScore = 0;
                               if (historicalTrends?.daily_trends?.length > 0) {
                                 const latestTrend = historicalTrends.daily_trends[historicalTrends.daily_trends.length - 1];
-                                currentScore = latestTrend.overall_score;
+                                // Convert burnout score (0-10) to health score (0-10): health = 10 - burnout
+                                currentScore = 10 - latestTrend.overall_score;
                               } else if (currentAnalysis?.analysis_data?.daily_trends?.length > 0) {
                                 const latestTrend = currentAnalysis.analysis_data.daily_trends[currentAnalysis.analysis_data.daily_trends.length - 1];
-                                currentScore = latestTrend.overall_score;
+                                // Convert burnout score (0-10) to health score (0-10): health = 10 - burnout
+                                currentScore = 10 - latestTrend.overall_score;
                               } else if (currentAnalysis?.analysis_data?.team_health) {
-                                currentScore = currentAnalysis.analysis_data.team_health.overall_score;
+                                // Convert burnout score (0-10) to health score (0-10): health = 10 - burnout
+                                currentScore = 10 - currentAnalysis.analysis_data.team_health.overall_score;
                               } else if (currentAnalysis?.analysis_data?.team_summary) {
-                                currentScore = currentAnalysis.analysis_data.team_summary.average_score;
+                                // Convert burnout score (0-10) to health score (0-10): health = 10 - burnout
+                                currentScore = 10 - currentAnalysis.analysis_data.team_summary.average_score;
                               }
                               
                               // Convert to health status using exact tooltip ranges: Good (70-89%), Fair (50-69%), Poor (30-49%), Critical (<30%)
