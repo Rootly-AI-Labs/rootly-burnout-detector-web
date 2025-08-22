@@ -516,6 +516,31 @@ class UnifiedBurnoutAnalyzer:
             
         except Exception as e:
             total_analysis_duration = (datetime.now() - analysis_start_time).total_seconds() if 'analysis_start_time' in locals() else 0
+            
+            # Enhanced debugging for NoneType errors
+            if "'NoneType' object has no attribute" in str(e):
+                import traceback
+                
+                logger.error(f"🚨 NONETYPE ERROR DETECTED: {time_range_days}-day analysis failed after {total_analysis_duration:.2f}s")
+                logger.error(f"🚨 NONETYPE ERROR: {str(e)}")
+                logger.error(f"🚨 NONETYPE STACK TRACE:")
+                logger.error(traceback.format_exc())
+                
+                # Log current state of critical variables
+                current_locals = locals()
+                critical_vars = ['data', 'users', 'incidents', 'metadata', 'team_analysis', 'team_health', 'result', 'daily_trends']
+                logger.error(f"🚨 NONETYPE VARIABLES:")
+                for var_name in critical_vars:
+                    if var_name in current_locals:
+                        var_value = current_locals[var_name]
+                        var_type = type(var_value)
+                        var_len = len(var_value) if hasattr(var_value, '__len__') else 'N/A'
+                        logger.error(f"  {var_name}: type={var_type.__name__}, is_none={var_value is None}, length={var_len}")
+                    else:
+                        logger.error(f"  {var_name}: UNDEFINED")
+                
+                logger.error(f"🚨 NONETYPE CONFIG: platform={self.platform}, features={self.features}")
+            
             logger.error(f"🔍 BURNOUT ANALYSIS FAILED: {time_range_days}-day analysis failed after {total_analysis_duration:.2f}s: {e}")
             raise
     
