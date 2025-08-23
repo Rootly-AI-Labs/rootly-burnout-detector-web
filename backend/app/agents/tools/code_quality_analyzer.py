@@ -343,8 +343,8 @@ Description: {self.description}
 
 Usage:
 result = code_quality_analyzer(
-    github_metrics={{"commit_frequency": 25, "pr_size_avg": 150, "review_time_avg": 2.5}},
-    time_period_days=30
+    github_data={{"commits": 50, "pull_requests": 10, "reviews": 15}},
+    time_window_days=30
 )
 
 Returns:
