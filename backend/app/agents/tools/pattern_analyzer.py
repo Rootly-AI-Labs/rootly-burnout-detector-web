@@ -376,6 +376,26 @@ class PatternAnalyzerTool(BaseTool):
         
         return recommendations
 
+    def to_code_prompt(self) -> str:
+        """Generate code prompt for smolagents jinja template rendering."""
+        return f"""
+Use the pattern_analyzer tool to identify temporal patterns in team activity and communication.
+
+Tool name: {self.name}
+Description: {self.description}
+
+Usage:
+result = pattern_analyzer(
+    temporal_data={{"hourly_activity": [0,0,5,10,15,20], "daily_patterns": ["M":25, "T":30]}},
+    activity_type="incidents"
+)
+
+Returns:
+- patterns: identified temporal patterns and anomalies
+- risk_indicators: concerning pattern-based risk factors
+- recommendations: suggestions for improving work-life balance
+"""
+
 
 def create_pattern_analyzer_tool():
     """Factory function to create pattern analyzer tool for smolagents."""

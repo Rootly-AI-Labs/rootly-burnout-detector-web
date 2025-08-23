@@ -165,6 +165,24 @@ class SentimentAnalyzerTool(BaseTool):
         
         return "; ".join(analysis) if analysis else "No specific patterns detected"
 
+    def to_code_prompt(self) -> str:
+        """Generate code prompt for smolagents jinja template rendering."""
+        return f"""
+Use the sentiment_analyzer tool to analyze sentiment patterns in communication data.
+
+Tool name: {self.name}
+Description: {self.description}
+
+Usage:
+result = sentiment_analyzer(messages=["message1", "message2"], context="slack")
+
+Returns:
+- overall_sentiment: "positive", "negative", or "neutral"
+- sentiment_score: float between -1.0 and 1.0
+- stress_indicators: list of identified stress patterns
+- pattern_analysis: contextual analysis of communication patterns
+"""
+
 
 def create_sentiment_analyzer_tool():
     """Factory function to create sentiment analyzer tool for smolagents."""

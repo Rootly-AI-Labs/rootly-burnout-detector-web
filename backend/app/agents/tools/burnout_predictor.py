@@ -590,6 +590,29 @@ class BurnoutPredictorTool(BaseTool):
         
         return recommendations[:5]  # Return top 5 recommendations
 
+    def to_code_prompt(self) -> str:
+        """Generate code prompt for smolagents jinja template rendering."""
+        return f"""
+Use the burnout_predictor tool to predict future burnout risk based on trends.
+
+Tool name: {self.name}
+Description: {self.description}
+
+Usage:
+result = burnout_predictor(
+    historical_analyses=[analysis1, analysis2],
+    current_metrics={{"incident_load": 3.5, "response_time": 25.0}},
+    time_horizon_days=30
+)
+
+Returns:
+- prediction_score: risk level from 0.0 (low) to 10.0 (critical)
+- risk_level: "low", "medium", "high", or "critical"
+- confidence_level: prediction confidence percentage
+- trend_analysis: analysis of key metric trends
+- early_warnings: list of early warning indicators
+"""
+
 
 def create_burnout_predictor_tool():
     """Factory function to create burnout predictor tool for smolagents."""

@@ -333,6 +333,26 @@ class CodeQualityAnalyzerTool(BaseTool):
             
         return recommendations
 
+    def to_code_prompt(self) -> str:
+        """Generate code prompt for smolagents jinja template rendering."""
+        return f"""
+Use the code_quality_analyzer tool to analyze code quality metrics and their impact on burnout.
+
+Tool name: {self.name}
+Description: {self.description}
+
+Usage:
+result = code_quality_analyzer(
+    github_metrics={{"commit_frequency": 25, "pr_size_avg": 150, "review_time_avg": 2.5}},
+    time_period_days=30
+)
+
+Returns:
+- quality_score: overall code quality score (0-100)
+- risk_indicators: list of quality-related burnout risks
+- recommendations: list of code quality improvements
+"""
+
 
 def create_code_quality_analyzer_tool():
     """Factory function to create code quality analyzer tool for smolagents."""

@@ -337,6 +337,26 @@ class WorkloadAnalyzerTool(BaseTool):
         else:
             return "sustainable"
 
+    def to_code_prompt(self) -> str:
+        """Generate code prompt for smolagents jinja template rendering."""
+        return f"""
+Use the workload_analyzer tool to analyze team workload distribution and balance.
+
+Tool name: {self.name}
+Description: {self.description}
+
+Usage:
+result = workload_analyzer(
+    team_metrics={{"incident_counts": [3, 5, 2], "response_times": [15, 30, 10]}},
+    time_period_days=30
+)
+
+Returns:
+- workload_balance: "balanced", "uneven", "critical"
+- distribution_analysis: analysis of work distribution
+- recommendations: list of balancing recommendations
+"""
+
 
 def create_workload_analyzer_tool():
     """Factory function to create workload analyzer tool for smolagents."""

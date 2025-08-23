@@ -527,6 +527,27 @@ class CrossPlatformCorrelatorTool(BaseTool):
         
         return correlations
 
+    def to_code_prompt(self) -> str:
+        """Generate code prompt for smolagents jinja template rendering."""
+        return f"""
+Use the cross_platform_correlator tool to correlate patterns across GitHub, Slack, and incident data.
+
+Tool name: {self.name}
+Description: {self.description}
+
+Usage:
+result = cross_platform_correlator(
+    github_data={{"commits": 50, "late_night": 15}},
+    slack_data={{"messages": 200, "sentiment": -0.2}},
+    incident_data={{"count": 3, "response_time": 25}}
+)
+
+Returns:
+- correlations: correlation coefficients between platforms
+- combined_risk_score: unified risk assessment
+- insights: cross-platform patterns and insights
+"""
+
 
 def create_cross_platform_correlator_tool():
     """Factory function to create cross-platform correlator tool for smolagents."""
