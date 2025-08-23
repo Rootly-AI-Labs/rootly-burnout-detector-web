@@ -2226,9 +2226,17 @@ export default function Dashboard() {
         ? dialogSelectedIntegration  // Keep as string for beta integrations
         : parseInt(dialogSelectedIntegration);  // Convert to number for regular integrations
       
+      // Validate time range before sending
+      const timeRangeValue = parseInt(selectedTimeRange);
+      const allowedTimeRanges = [7, 14, 30, 60, 90, 180, 365];
+      
+      if (!allowedTimeRanges.includes(timeRangeValue)) {
+        throw new Error(`Invalid time range: ${timeRangeValue}. Must be one of: ${allowedTimeRanges.join(', ')}`);
+      }
+
       const requestData = {
         integration_id: integrationId,
-        time_range: parseInt(selectedTimeRange),
+        time_range: timeRangeValue,
         include_weekends: true,
         include_github: githubIntegration ? includeGithub : false,
         include_slack: slackIntegration ? includeSlack : false,
@@ -5971,8 +5979,8 @@ export default function Dashboard() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="3">Last 3 days</SelectItem>
                   <SelectItem value="7">Last 7 days</SelectItem>
+                  <SelectItem value="14">Last 14 days</SelectItem>
                   <SelectItem value="30">Last 30 days</SelectItem>
                   <SelectItem value="60">Last 60 days</SelectItem>
                   <SelectItem value="90">Last 90 days</SelectItem>
