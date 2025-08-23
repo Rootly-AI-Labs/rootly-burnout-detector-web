@@ -2414,8 +2414,33 @@ export default function Dashboard() {
               console.log('Analysis running, checking progress...', {
                 hasProgress: analysisData.progress !== undefined,
                 hasStage: !!analysisData.stage,
-                status: analysisData.status
+                status: analysisData.status,
+                currentStage: analysisData.stage,
+                progress: analysisData.progress,
+                error_message: analysisData.error_message,
+                created_at: analysisData.created_at
               })
+              
+              // Check if analysis has been running for too long (over 5 minutes in same stage)
+              if (analysisData.created_at) {
+                const createdTime = new Date(analysisData.created_at).getTime()
+                const now = Date.now()
+                const runningTimeMinutes = (now - createdTime) / (1000 * 60)
+                
+                console.log(`Analysis running for ${runningTimeMinutes.toFixed(1)} minutes at stage: ${analysisData.stage || 'unknown'}`)
+                
+                // If stuck at same progress for over 5 minutes, show warning
+                if (runningTimeMinutes > 5 && analysisData.stage === 'fetching') {
+                  console.warn(`Analysis stuck at incident data collection for ${runningTimeMinutes.toFixed(1)} minutes`)
+                  
+                  // Show progressively more urgent messages
+                  if (runningTimeMinutes > 8) {
+                    toast.error(`Analysis stuck at incident data collection for ${runningTimeMinutes.toFixed(1)} minutes. This usually means the Rootly API is slow or rate limiting. Consider trying a shorter time range.`)
+                  } else if (runningTimeMinutes > 5) {
+                    toast.warning(`Analysis taking longer than usual (${runningTimeMinutes.toFixed(1)} minutes). Large datasets or API rate limits may cause delays.`)
+                  }
+                }
+              }
               
               // Check if we have progress information from the API
               if (analysisData.progress !== undefined) {
