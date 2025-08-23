@@ -2274,6 +2274,23 @@ export default function Dashboard() {
       }
       
       if (!response.ok) {
+        // Enhanced error logging for 422 validation errors
+        if (response.status === 422) {
+          console.error('422 Validation Error Details:', responseData)
+          console.error('Request data that failed validation:', requestData)
+          
+          // Try to extract specific validation errors
+          let errorMessage = "Validation failed: "
+          if (responseData.detail && Array.isArray(responseData.detail)) {
+            const validationErrors = responseData.detail.map(err => 
+              `${err.loc ? err.loc.join('.') : 'unknown field'}: ${err.msg}`
+            ).join(', ')
+            errorMessage += validationErrors
+          } else {
+            errorMessage += responseData.detail || responseData.message || "Unknown validation error"
+          }
+          throw new Error(errorMessage)
+        }
         throw new Error(responseData.detail || responseData.message || `Analysis failed with status ${response.status}`)
       }
 
