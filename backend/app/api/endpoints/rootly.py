@@ -1191,27 +1191,34 @@ async def update_user_correlation_github_username(
                 detail="User correlation not found or doesn't belong to you"
             )
 
-        # Validate GitHub username (basic validation)
+        # Validate and process GitHub username
         github_username = github_username.strip()
-        if not github_username:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="GitHub username cannot be empty"
-            )
 
-        # Update the GitHub username
+        # Update the GitHub username (allow empty string to clear mapping)
         old_username = correlation.github_username
-        correlation.github_username = github_username
-        db.commit()
 
-        logger.info(
-            f"User {current_user.id} manually updated GitHub username for {correlation.email}: "
-            f"{old_username} → {github_username}"
-        )
+        if github_username == "":
+            # Clear the mapping
+            correlation.github_username = None
+            db.commit()
+            logger.info(
+                f"User {current_user.id} cleared GitHub username for {correlation.email} "
+                f"(was: {old_username})"
+            )
+            message = "GitHub username mapping cleared"
+        else:
+            # Set the mapping
+            correlation.github_username = github_username
+            db.commit()
+            logger.info(
+                f"User {current_user.id} manually updated GitHub username for {correlation.email}: "
+                f"{old_username} → {github_username}"
+            )
+            message = f"GitHub username updated to {github_username}"
 
         return {
             "success": True,
-            "message": f"GitHub username updated to {github_username}",
+            "message": message,
             "correlation": {
                 "id": correlation.id,
                 "email": correlation.email,
