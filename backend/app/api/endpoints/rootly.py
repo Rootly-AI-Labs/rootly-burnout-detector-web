@@ -1165,3 +1165,68 @@ async def get_synced_users(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch synced users: {str(e)}"
         )
+
+
+@router.patch("/user-correlation/{correlation_id}/github-username")
+async def update_user_correlation_github_username(
+    correlation_id: int,
+    github_username: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Manually update GitHub username for a UserCorrelation.
+    Used when automatic correlation fails and user needs to manually map.
+    """
+    try:
+        # Fetch the correlation - ensure it belongs to current user
+        correlation = db.query(UserCorrelation).filter(
+            UserCorrelation.id == correlation_id,
+            UserCorrelation.user_id == current_user.id
+        ).first()
+
+        if not correlation:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User correlation not found or doesn't belong to you"
+            )
+
+        # Validate GitHub username (basic validation)
+        github_username = github_username.strip()
+        if not github_username:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="GitHub username cannot be empty"
+            )
+
+        # Update the GitHub username
+        old_username = correlation.github_username
+        correlation.github_username = github_username
+        db.commit()
+
+        logger.info(
+            f"User {current_user.id} manually updated GitHub username for {correlation.email}: "
+            f"{old_username} → {github_username}"
+        )
+
+        return {
+            "success": True,
+            "message": f"GitHub username updated to {github_username}",
+            "correlation": {
+                "id": correlation.id,
+                "email": correlation.email,
+                "name": correlation.name,
+                "github_username": correlation.github_username,
+                "slack_user_id": correlation.slack_user_id
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Failed to update GitHub username: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update GitHub username: {str(e)}"
+        )

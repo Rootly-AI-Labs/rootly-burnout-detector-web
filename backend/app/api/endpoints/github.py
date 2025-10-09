@@ -581,10 +581,110 @@ async def disconnect_github(
             "success": True,
             "message": "GitHub integration disconnected successfully"
         }
-        
+
     except Exception as e:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to disconnect GitHub integration: {str(e)}"
+        )
+
+
+@router.get("/org-members")
+async def get_github_org_members(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Fetch all members from accessible GitHub organizations for autocomplete.
+    Returns list of GitHub usernames that can be used for manual correlation.
+    """
+    try:
+        # Get user's GitHub integration or use beta token
+        integration = db.query(GitHubIntegration).filter(
+            GitHubIntegration.user_id == current_user.id
+        ).first()
+
+        github_token = None
+        if integration and integration.github_token:
+            github_token = decrypt_token(integration.github_token)
+            logger.info("Using personal GitHub token for org members fetch")
+        else:
+            # Fallback to beta token
+            github_token = os.getenv('GITHUB_TOKEN')
+            if github_token:
+                logger.info("Using beta GitHub token for org members fetch")
+
+        if not github_token:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="GitHub integration not connected"
+            )
+
+        # Fetch organization members
+        import httpx
+        async with httpx.AsyncClient() as client:
+            headers = {
+                'Authorization': f'token {github_token}',
+                'Accept': 'application/vnd.github.v3+json',
+                'User-Agent': 'Rootly-Burnout-Detector'
+            }
+
+            # First, get user's organizations
+            orgs_response = await client.get("https://api.github.com/user/orgs", headers=headers)
+            if orgs_response.status_code != 200:
+                raise HTTPException(
+                    status_code=status.HTTP_502_BAD_GATEWAY,
+                    detail=f"Failed to fetch organizations: {orgs_response.status_code}"
+                )
+
+            orgs = orgs_response.json()
+            org_names = [org['login'] for org in orgs]
+            logger.info(f"Found {len(org_names)} organizations for user")
+
+            # Collect all unique members from all orgs
+            all_members = set()
+            org_member_counts = {}
+
+            for org in org_names:
+                try:
+                    members_response = await client.get(
+                        f"https://api.github.com/orgs/{org}/members",
+                        headers=headers,
+                        params={'per_page': 100}  # Get up to 100 members per org
+                    )
+
+                    if members_response.status_code == 200:
+                        members = members_response.json()
+                        member_logins = [member['login'] for member in members]
+                        all_members.update(member_logins)
+                        org_member_counts[org] = len(member_logins)
+                        logger.info(f"Fetched {len(member_logins)} members from {org}")
+                    else:
+                        logger.warning(f"Failed to fetch members from {org}: {members_response.status_code}")
+                        org_member_counts[org] = 0
+
+                except Exception as e:
+                    logger.error(f"Error fetching members from {org}: {e}")
+                    org_member_counts[org] = 0
+
+            # Convert to sorted list
+            sorted_members = sorted(list(all_members))
+
+            return {
+                "success": True,
+                "members": sorted_members,
+                "total_members": len(sorted_members),
+                "organizations": org_names,
+                "org_member_counts": org_member_counts,
+                "message": f"Found {len(sorted_members)} unique members across {len(org_names)} organizations"
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to fetch GitHub org members: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch GitHub organization members: {str(e)}"
         )
