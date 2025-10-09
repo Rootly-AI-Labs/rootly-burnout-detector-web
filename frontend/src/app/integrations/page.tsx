@@ -238,8 +238,120 @@ export default function IntegrationsPage() {
   const [showSyncedUsers, setShowSyncedUsers] = useState(false)
   const [teamMembersDrawerOpen, setTeamMembersDrawerOpen] = useState(false)
 
+  // GitHub username editing state
+  const [editingUserId, setEditingUserId] = useState<number | null>(null)
+  const [editingUsername, setEditingUsername] = useState<string>('')
+  const [githubOrgMembers, setGithubOrgMembers] = useState<string[]>([])
+  const [loadingOrgMembers, setLoadingOrgMembers] = useState(false)
+  const [savingUsername, setSavingUsername] = useState(false)
+
   // Manual survey delivery modal state
   const [showManualSurveyModal, setShowManualSurveyModal] = useState(false)
+
+  // GitHub org members handlers
+  const fetchGitHubOrgMembers = async () => {
+    if (!githubIntegration) return
+
+    setLoadingOrgMembers(true)
+    try {
+      const authToken = localStorage.getItem('auth_token')
+      if (!authToken) {
+        toast.error('Please log in to load GitHub members')
+        return
+      }
+
+      const response = await fetch(`${API_BASE}/github/org-members`, {
+        headers: {
+          'Authorization': `Bearer ${authToken}`
+        }
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        setGithubOrgMembers(data.members || [])
+        console.log(`Loaded ${data.total_members} GitHub org members for autocomplete`)
+      } else {
+        const error = await response.json()
+        console.error('Failed to load GitHub org members:', error)
+      }
+    } catch (error) {
+      console.error('Error fetching GitHub org members:', error)
+    } finally {
+      setLoadingOrgMembers(false)
+    }
+  }
+
+  const startEditingGitHubUsername = (userId: number, currentUsername: string | null) => {
+    setEditingUserId(userId)
+    setEditingUsername(currentUsername || '')
+  }
+
+  const cancelEditingGitHubUsername = () => {
+    setEditingUserId(null)
+    setEditingUsername('')
+  }
+
+  const saveGitHubUsername = async (userId: number) => {
+    setSavingUsername(true)
+    try {
+      const authToken = localStorage.getItem('auth_token')
+      if (!authToken) {
+        toast.error('Please log in to update GitHub username')
+        return
+      }
+
+      const response = await fetch(
+        `${API_BASE}/rootly/user-correlation/${userId}/github-username?github_username=${encodeURIComponent(editingUsername)}`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Authorization': `Bearer ${authToken}`
+          }
+        }
+      )
+
+      if (response.ok) {
+        const data = await response.json()
+        if (editingUsername === '') {
+          toast.success('GitHub username mapping cleared')
+        } else {
+          toast.success(`GitHub username updated to ${editingUsername}`)
+        }
+
+        // Refresh synced users list - simple re-fetch
+        const selectedOrg = selectedOrganization || integrations.find(i => i.is_default)?.id?.toString()
+        if (selectedOrg) {
+          setLoadingSyncedUsers(true)
+          try {
+            const authToken = localStorage.getItem('auth_token')
+            const response = await fetch(`${API_BASE}/rootly/synced-users?integration_id=${selectedOrg}`, {
+              headers: {
+                'Authorization': `Bearer ${authToken}`
+              }
+            })
+            if (response.ok) {
+              const data = await response.json()
+              setSyncedUsers(data.users || [])
+            }
+          } catch (error) {
+            console.error('Error refreshing synced users:', error)
+          } finally {
+            setLoadingSyncedUsers(false)
+          }
+        }
+
+        cancelEditingGitHubUsername()
+      } else {
+        const error = await response.json()
+        toast.error(error.detail || 'Failed to update GitHub username')
+      }
+    } catch (error) {
+      console.error('Error updating GitHub username:', error)
+      toast.error('Failed to update GitHub username')
+    } finally {
+      setSavingUsername(false)
+    }
+  }
 
   // AI Integration state
   const [llmToken, setLlmToken] = useState('')
@@ -411,6 +523,13 @@ export default function IntegrationsPage() {
       loadOrganizationData()
     }
   }, [showInviteModal])
+
+  // Fetch GitHub org members when GitHub is connected
+  useEffect(() => {
+    if (githubIntegration && teamMembersDrawerOpen && showSyncedUsers) {
+      fetchGitHubOrgMembers()
+    }
+  }, [githubIntegration, teamMembersDrawerOpen, showSyncedUsers])
 
   // Handle Slack OAuth success redirect
   useEffect(() => {
@@ -3114,11 +3233,81 @@ export default function IntegrationsPage() {
                           ))}
                         </div>
                       </div>
-                      {user.github_username && (
-                        <div className="pl-13 text-xs text-gray-500">
-                          GitHub: <span className="font-mono">{user.github_username}</span>
-                        </div>
-                      )}
+                      {/* GitHub username section - always show, with edit capability */}
+                      <div className="pl-13 mt-2">
+                        {editingUserId === user.id ? (
+                          // Edit mode
+                          <div className="flex items-center space-x-2">
+                            <Select
+                              value={editingUsername}
+                              onValueChange={setEditingUsername}
+                              disabled={savingUsername}
+                            >
+                              <SelectTrigger className="h-8 text-xs flex-1">
+                                <SelectValue placeholder="Select GitHub username..." />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="">
+                                  <span className="text-gray-400 italic">Clear mapping</span>
+                                </SelectItem>
+                                {githubOrgMembers.length > 0 ? (
+                                  githubOrgMembers.map(username => (
+                                    <SelectItem key={username} value={username}>
+                                      {username}
+                                    </SelectItem>
+                                  ))
+                                ) : (
+                                  <div className="text-xs text-gray-400 p-2">
+                                    {loadingOrgMembers ? 'Loading...' : 'No GitHub members found'}
+                                  </div>
+                                )}
+                              </SelectContent>
+                            </Select>
+                            <Button
+                              size="sm"
+                              onClick={() => saveGitHubUsername(user.id)}
+                              disabled={savingUsername}
+                              className="h-8 px-2"
+                            >
+                              {savingUsername ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <Check className="w-3 h-3" />
+                              )}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={cancelEditingGitHubUsername}
+                              disabled={savingUsername}
+                              className="h-8 px-2"
+                            >
+                              <X className="w-3 h-3" />
+                            </Button>
+                          </div>
+                        ) : (
+                          // Display mode
+                          <div className="flex items-center justify-between text-xs">
+                            <div className="text-gray-500">
+                              GitHub: {user.github_username ? (
+                                <span className="font-mono text-gray-700">{user.github_username}</span>
+                              ) : (
+                                <span className="text-gray-400 italic">Not mapped</span>
+                              )}
+                            </div>
+                            {githubIntegration && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => startEditingGitHubUsername(user.id, user.github_username)}
+                                className="h-6 px-2 text-gray-400 hover:text-gray-700"
+                              >
+                                <Edit3 className="w-3 h-3" />
+                              </Button>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
