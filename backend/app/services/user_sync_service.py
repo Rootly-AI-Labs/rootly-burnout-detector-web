@@ -83,6 +83,7 @@ class UserSyncService:
                 "id": user.get("id"),
                 "email": attrs.get("email"),
                 "name": attrs.get("name") or attrs.get("full_name"),
+                "github_username": attrs.get("github_handle"),  # Extract GitHub username if available
                 "platform": "rootly"
             })
 
@@ -96,10 +97,19 @@ class UserSyncService:
         # PagerDuty format (may need adjustment based on actual API response)
         users = []
         for user in raw_users:
+            # PagerDuty doesn't have GitHub username in standard API, but check contact methods
+            github_username = None
+            contact_methods = user.get("contact_methods", [])
+            for contact in contact_methods:
+                if contact.get("type") == "github" or "github" in contact.get("label", "").lower():
+                    github_username = contact.get("address")
+                    break
+
             users.append({
                 "id": user.get("id"),
                 "email": user.get("email"),
                 "name": user.get("name"),
+                "github_username": github_username,  # Extract GitHub username if available
                 "platform": "pagerduty"
             })
 
@@ -203,6 +213,13 @@ class UserSyncService:
         if user.get("name") and correlation.name != user["name"]:
             correlation.name = user["name"]
             updated = True
+
+        # Update GitHub username if available and different
+        github_username = user.get("github_username")
+        if github_username and correlation.github_username != github_username:
+            correlation.github_username = github_username
+            updated = True
+            logger.info(f"Updated GitHub username for {correlation.email}: {github_username}")
 
         if platform == "rootly":
             if not correlation.rootly_email or correlation.rootly_email != user["email"]:
