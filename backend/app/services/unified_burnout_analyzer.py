@@ -1105,16 +1105,29 @@ class UnifiedBurnoutAnalyzer:
         }
     
     def _map_user_incidents(
-        self, 
-        users: List[Dict[str, Any]], 
+        self,
+        users: List[Dict[str, Any]],
         incidents: List[Dict[str, Any]]
     ) -> Dict[str, List[Dict[str, Any]]]:
         """Map incidents to users based on involvement."""
         user_incidents = defaultdict(list)
-        
+
         # Ensure inputs are valid
         incidents = incidents or []
-        
+
+        # 🔍 DEBUG: Log mapping start
+        logger.info(f"🔍 MAPPING: Starting incident-to-user mapping for {len(users)} users and {len(incidents)} incidents (platform: {self.platform})")
+
+        # 🔍 DEBUG: Log user IDs
+        user_ids = []
+        for u in users:
+            if self.platform == "pagerduty":
+                uid = u.get("id")
+            else:
+                uid = u.get("id")  # For Rootly JSONAPI, id is at top level
+            user_ids.append(str(uid) if uid else "no-id")
+        logger.info(f"🔍 MAPPING: User IDs available: {user_ids}")
+
         for incident in incidents:
             # Add safety check for None incident
             if incident is None:
@@ -1158,33 +1171,47 @@ class UnifiedBurnoutAnalyzer:
             else:
                 # Rootly format
                 attrs = incident.get("attributes", {}) if incident else {}
-                
+
+                # 🔍 DEBUG: Log incident structure
+                incident_id = incident.get("id", "unknown")
+                logger.debug(f"🔍 MAPPING: Processing Rootly incident {incident_id}")
+                logger.debug(f"   - Has attributes: {bool(attrs)}")
+                logger.debug(f"   - Attributes keys: {list(attrs.keys()) if attrs else []}")
+
                 # Extract all users involved in the incident with comprehensive null safety
                 # Creator/Reporter
                 user_data = attrs.get("user")
                 if user_data and isinstance(user_data, dict):
                     data = user_data.get("data")
                     if data and isinstance(data, dict) and data.get("id"):
-                        incident_users.add(str(data["id"]))
-                
+                        assigned_id = str(data["id"])
+                        incident_users.add(assigned_id)
+                        logger.info(f"🔍 MAPPING: Incident {incident_id} assigned to user ID: {assigned_id}")
+
                 # Started by (acknowledged)
                 started_by_data = attrs.get("started_by")
                 if started_by_data and isinstance(started_by_data, dict):
                     data = started_by_data.get("data")
                     if data and isinstance(data, dict) and data.get("id"):
                         incident_users.add(str(data["id"]))
-                
+
                 # Resolved by
                 resolved_by_data = attrs.get("resolved_by")
                 if resolved_by_data and isinstance(resolved_by_data, dict):
                     data = resolved_by_data.get("data")
                     if data and isinstance(data, dict) and data.get("id"):
                         incident_users.add(str(data["id"]))
-            
+
             # Add incident to each involved user
             for user_id in incident_users:
                 user_incidents[user_id].append(incident)
-        
+                logger.debug(f"🔍 MAPPING: Added incident to user {user_id}")
+
+        # 🔍 DEBUG: Log final mapping results
+        logger.info(f"🔍 MAPPING: Mapping complete. Users with incidents: {len(user_incidents)}")
+        for user_id, incidents_list in user_incidents.items():
+            logger.info(f"   - User {user_id}: {len(incidents_list)} incidents")
+
         return dict(user_incidents)
     
     def _analyze_member_burnout(

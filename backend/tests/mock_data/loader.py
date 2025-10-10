@@ -131,8 +131,14 @@ class MockDataLoader:
         for user in yaml_users:
             if platform == "pagerduty":
                 # PagerDuty API format
+                # CRITICAL FIX: Use Rootly ID if available (for scenarios with Rootly data),
+                # otherwise use PagerDuty ID, and finally fall back to email
+                rootly_id = user.get('rootly', {}).get('id')
+                pagerduty_id = user.get('pagerduty', {}).get('id')
+                user_id = pagerduty_id if pagerduty_id else (rootly_id if rootly_id else user['email'])
+
                 formatted_user = {
-                    "id": user.get('pagerduty', {}).get('id', user['email']),
+                    "id": user_id,
                     "name": user['name'],
                     "email": user['email'],
                     "timezone": user.get('pagerduty', {}).get('timezone', 'UTC'),
@@ -242,7 +248,12 @@ class MockDataLoader:
         github_data = {}
         for user in scenario_data['users']:
             email = user['email']
-            github_info = user.get('github', {})
+            github_info = user.get('github')
+
+            # Skip users with null or missing GitHub data
+            if github_info is None or not github_info:
+                logger.debug(f"Skipping {email} - no GitHub data")
+                continue
 
             # Calculate analysis period (30 days back from now)
             end_time = datetime.now()
@@ -272,6 +283,7 @@ class MockDataLoader:
                 "activity_data": github_info.get('activity_data', {})
             }
 
+        logger.info(f"Loaded GitHub data for {len(github_data)} users (skipped users with null GitHub data)")
         return github_data
 
     def get_slack_data(self, scenario_name: str) -> Dict[str, Any]:
@@ -290,7 +302,12 @@ class MockDataLoader:
         slack_data = {}
         for user in scenario_data['users']:
             user_name = user['name']
-            slack_info = user.get('slack', {})
+            slack_info = user.get('slack')
+
+            # Skip users with null or missing Slack data
+            if slack_info is None or not slack_info:
+                logger.debug(f"Skipping {user_name} - no Slack data")
+                continue
 
             # Calculate analysis period
             end_time = datetime.now()
@@ -326,6 +343,7 @@ class MockDataLoader:
                 "fetch_errors": slack_info.get('fetch_errors', {"rate_limited_channels": [], "errors": []})
             }
 
+        logger.info(f"Loaded Slack data for {len(slack_data)} users (skipped users with null Slack data)")
         return slack_data
 
     def get_scenario_info(self, scenario_name: str) -> Dict[str, str]:

@@ -1,0 +1,570 @@
+# Scenario: Diversified Team (Rootly Platform)
+# Description: Realistic team with diverse burnout levels, GitHub and Slack activity
+# Expected Result: Mix of healthy, warning, and at-risk members with full integration data
+# Platform: Rootly (uses Rootly IDs consistently)
+
+scenario_name: diversified_team_rootly
+description: Diverse team with varied workloads, GitHub activity, and Slack communication patterns
+
+users:
+  - email: sarah.chen@rootly.com
+    username: sarachen
+    name: Sarah Chen
+
+    # GitHub Activity - HEALTHY CONTRIBUTOR
+    github:
+      total_commits: 35
+      total_pull_requests: 12
+      total_reviews: 16
+      commits_per_week: 8.2
+      prs_per_week: 2.8
+      after_hours_commit_percentage: 0.09
+      weekend_commit_percentage: 0.05
+      repositories_touched: 4
+      avg_pr_size: 170
+      clustered_commits: 3
+      burnout_indicators:
+        excessive_commits: false
+        late_night_activity: false
+        weekend_work: false
+        large_prs: false
+      activity_data:
+        commits_count: 35
+        pull_requests_count: 12
+        reviews_count: 16
+        after_hours_commits: 3
+        weekend_commits: 2
+        avg_pr_size: 170
+
+    slack:
+      total_messages: 180
+      messages_per_day: 6.0
+      after_hours_percentage: 0.08
+      weekend_percentage: 0.04
+      channel_diversity: 8
+      dm_ratio: 0.22
+      thread_participation_rate: 0.52
+      avg_message_length: 72
+      peak_hour_concentration: 0.42
+      response_pattern_score: 7.8
+      avg_sentiment: 0.72
+      negative_sentiment_ratio: 0.05
+      positive_sentiment_ratio: 0.50
+      stress_indicator_ratio: 0.03
+      sentiment_volatility: 0.13
+      burnout_indicators:
+        excessive_messaging: false
+        poor_sentiment: false
+        late_responses: false
+        after_hours_activity: false
+        stress_indicators: false
+      activity_data:
+        messages_sent: 180
+        channels_active: 8
+        after_hours_messages: 14
+        weekend_messages: 7
+        avg_response_time_minutes: 16
+        sentiment_score: 0.72
+        negative_messages: 9
+        positive_messages: 90
+        neutral_messages: 81
+        stress_indicators: 5
+      fetch_errors:
+        rate_limited_channels: []
+        errors: []
+
+    rootly:
+      id: "200001"
+      slack_id: U02SARAH456
+      time_zone: America/Los_Angeles
+      full_name_with_team: "[Platform] Sarah Chen"
+      phone: "+14085556789"
+      created_at: "2024-03-01T10:00:00Z"
+      updated_at: "2025-10-01T14:30:00Z"
+
+  - email: marcus.washington@rootly.com
+    username: marcusw
+    name: Marcus Washington
+
+    # GitHub Activity - WARNING LEVEL
+    github:
+      total_commits: 68
+      total_pull_requests: 19
+      total_reviews: 24
+      commits_per_week: 15.9
+      prs_per_week: 4.4
+      after_hours_commit_percentage: 0.28
+      weekend_commit_percentage: 0.18
+      repositories_touched: 7
+      avg_pr_size: 285
+      clustered_commits: 9
+      burnout_indicators:
+        excessive_commits: false
+        late_night_activity: false
+        weekend_work: true
+        large_prs: false
+      activity_data:
+        commits_count: 68
+        pull_requests_count: 19
+        reviews_count: 24
+        after_hours_commits: 19
+        weekend_commits: 12
+        avg_pr_size: 285
+
+    slack:
+      total_messages: 290
+      messages_per_day: 9.7
+      after_hours_percentage: 0.20
+      weekend_percentage: 0.14
+      channel_diversity: 11
+      dm_ratio: 0.28
+      thread_participation_rate: 0.62
+      avg_message_length: 88
+      peak_hour_concentration: 0.48
+      response_pattern_score: 6.2
+      avg_sentiment: 0.35
+      negative_sentiment_ratio: 0.15
+      positive_sentiment_ratio: 0.35
+      stress_indicator_ratio: 0.12
+      sentiment_volatility: 0.28
+      burnout_indicators:
+        excessive_messaging: false
+        poor_sentiment: false
+        late_responses: false
+        after_hours_activity: true
+        stress_indicators: false
+      activity_data:
+        messages_sent: 290
+        channels_active: 11
+        after_hours_messages: 58
+        weekend_messages: 41
+        avg_response_time_minutes: 11
+        sentiment_score: 0.35
+        negative_messages: 44
+        positive_messages: 102
+        neutral_messages: 144
+        stress_indicators: 35
+      fetch_errors:
+        rate_limited_channels: []
+        errors: []
+
+    rootly:
+      id: "200002"
+      slack_id: U02MARCUS789
+      time_zone: America/Chicago
+      full_name_with_team: "[Backend] Marcus Washington"
+      phone: "+13125554321"
+      created_at: "2024-02-15T10:00:00Z"
+      updated_at: "2025-10-01T14:30:00Z"
+
+  - email: aisha.patel@rootly.com
+    username: aishap
+    name: Aisha Patel
+
+    # GitHub Activity - HIGH BURNOUT
+    github:
+      total_commits: 92
+      total_pull_requests: 28
+      total_reviews: 35
+      commits_per_week: 21.5
+      prs_per_week: 6.5
+      after_hours_commit_percentage: 0.38
+      weekend_commit_percentage: 0.25
+      repositories_touched: 9
+      avg_pr_size: 380
+      clustered_commits: 14
+      burnout_indicators:
+        excessive_commits: true
+        late_night_activity: true
+        weekend_work: true
+        large_prs: false
+      activity_data:
+        commits_count: 92
+        pull_requests_count: 28
+        reviews_count: 35
+        after_hours_commits: 35
+        weekend_commits: 23
+        avg_pr_size: 380
+
+    slack:
+      total_messages: 520
+      messages_per_day: 17.3
+      after_hours_percentage: 0.42
+      weekend_percentage: 0.28
+      channel_diversity: 15
+      dm_ratio: 0.38
+      thread_participation_rate: 0.74
+      avg_message_length: 102
+      peak_hour_concentration: 0.58
+      response_pattern_score: 3.8
+      avg_sentiment: -0.05
+      negative_sentiment_ratio: 0.28
+      positive_sentiment_ratio: 0.22
+      stress_indicator_ratio: 0.32
+      sentiment_volatility: 0.52
+      burnout_indicators:
+        excessive_messaging: true
+        poor_sentiment: true
+        late_responses: true
+        after_hours_activity: true
+        stress_indicators: true
+      activity_data:
+        messages_sent: 520
+        channels_active: 15
+        after_hours_messages: 218
+        weekend_messages: 146
+        avg_response_time_minutes: 7
+        sentiment_score: -0.05
+        negative_messages: 146
+        positive_messages: 114
+        neutral_messages: 260
+        stress_indicators: 166
+      fetch_errors:
+        rate_limited_channels: []
+        errors: []
+
+    rootly:
+      id: "200003"
+      slack_id: U02AISHA012
+      time_zone: America/New_York
+      full_name_with_team: "[Infrastructure] Aisha Patel"
+      phone: "+16465558765"
+      created_at: "2024-01-10T10:00:00Z"
+      updated_at: "2025-10-01T14:30:00Z"
+
+  - email: david.kim@rootly.com
+    username: davidkim
+    name: David Kim
+
+    # GitHub Activity - MODERATE
+    github:
+      total_commits: 48
+      total_pull_requests: 15
+      total_reviews: 19
+      commits_per_week: 11.2
+      prs_per_week: 3.5
+      after_hours_commit_percentage: 0.15
+      weekend_commit_percentage: 0.10
+      repositories_touched: 5
+      avg_pr_size: 220
+      clustered_commits: 5
+      burnout_indicators:
+        excessive_commits: false
+        late_night_activity: false
+        weekend_work: false
+        large_prs: false
+      activity_data:
+        commits_count: 48
+        pull_requests_count: 15
+        reviews_count: 19
+        after_hours_commits: 7
+        weekend_commits: 5
+        avg_pr_size: 220
+
+    slack:
+      total_messages: 210
+      messages_per_day: 7.0
+      after_hours_percentage: 0.12
+      weekend_percentage: 0.08
+      channel_diversity: 9
+      dm_ratio: 0.25
+      thread_participation_rate: 0.58
+      avg_message_length: 78
+      peak_hour_concentration: 0.45
+      response_pattern_score: 7.0
+      avg_sentiment: 0.55
+      negative_sentiment_ratio: 0.08
+      positive_sentiment_ratio: 0.42
+      stress_indicator_ratio: 0.06
+      sentiment_volatility: 0.18
+      burnout_indicators:
+        excessive_messaging: false
+        poor_sentiment: false
+        late_responses: false
+        after_hours_activity: false
+        stress_indicators: false
+      activity_data:
+        messages_sent: 210
+        channels_active: 9
+        after_hours_messages: 25
+        weekend_messages: 17
+        avg_response_time_minutes: 14
+        sentiment_score: 0.55
+        negative_messages: 17
+        positive_messages: 88
+        neutral_messages: 105
+        stress_indicators: 13
+      fetch_errors:
+        rate_limited_channels: []
+        errors: []
+
+    rootly:
+      id: "200004"
+      slack_id: U02DAVID345
+      time_zone: America/Denver
+      full_name_with_team: "[Frontend] David Kim"
+      phone: "+13035557890"
+      created_at: "2024-04-20T10:00:00Z"
+      updated_at: "2025-10-01T14:30:00Z"
+
+  - email: elena.rodriguez@rootly.com
+    username: elenar
+    name: Elena Rodriguez
+
+    # GitHub Activity - HEALTHY SENIOR
+    github:
+      total_commits: 29
+      total_pull_requests: 9
+      total_reviews: 22
+      commits_per_week: 6.8
+      prs_per_week: 2.1
+      after_hours_commit_percentage: 0.07
+      weekend_commit_percentage: 0.03
+      repositories_touched: 6
+      avg_pr_size: 145
+      clustered_commits: 2
+      burnout_indicators:
+        excessive_commits: false
+        late_night_activity: false
+        weekend_work: false
+        large_prs: false
+      activity_data:
+        commits_count: 29
+        pull_requests_count: 9
+        reviews_count: 22
+        after_hours_commits: 2
+        weekend_commits: 1
+        avg_pr_size: 145
+
+    slack:
+      total_messages: 320
+      messages_per_day: 10.7
+      after_hours_percentage: 0.06
+      weekend_percentage: 0.03
+      channel_diversity: 12
+      dm_ratio: 0.30
+      thread_participation_rate: 0.65
+      avg_message_length: 95
+      peak_hour_concentration: 0.38
+      response_pattern_score: 8.5
+      avg_sentiment: 0.68
+      negative_sentiment_ratio: 0.06
+      positive_sentiment_ratio: 0.48
+      stress_indicator_ratio: 0.04
+      sentiment_volatility: 0.15
+      burnout_indicators:
+        excessive_messaging: false
+        poor_sentiment: false
+        late_responses: false
+        after_hours_activity: false
+        stress_indicators: false
+      activity_data:
+        messages_sent: 320
+        channels_active: 12
+        after_hours_messages: 19
+        weekend_messages: 10
+        avg_response_time_minutes: 19
+        sentiment_score: 0.68
+        negative_messages: 19
+        positive_messages: 154
+        neutral_messages: 147
+        stress_indicators: 13
+      fetch_errors:
+        rate_limited_channels: []
+        errors: []
+
+    rootly:
+      id: "200005"
+      slack_id: U02ELENA678
+      time_zone: Europe/Madrid
+      full_name_with_team: "[Engineering Manager] Elena Rodriguez"
+      phone: "+34915559876"
+      created_at: "2023-11-05T10:00:00Z"
+      updated_at: "2025-10-01T14:30:00Z"
+
+# Incidents - DIVERSIFIED DISTRIBUTION
+incidents:
+  # Sarah Chen - 2 incidents (low workload)
+  - id: INC_DIV_001
+    title: Cache warming optimization needed
+    created_at: "2025-09-15T10:30:00Z"
+    resolved_at: "2025-09-15T12:15:00Z"
+    assigned_user_id: "200001"  # Sarah Chen
+    assigned_user_email: sarah.chen@rootly.com
+    assigned_user_name: Sarah Chen
+    severity: low
+    status: resolved
+
+  - id: INC_DIV_002
+    title: Update API documentation
+    created_at: "2025-09-22T14:00:00Z"
+    resolved_at: "2025-09-22T15:30:00Z"
+    assigned_user_id: "200001"  # Sarah Chen
+    assigned_user_email: sarah.chen@rootly.com
+    assigned_user_name: Sarah Chen
+    severity: low
+    status: resolved
+
+  # Marcus Washington - 4 incidents (moderate, some after-hours)
+  - id: INC_DIV_003
+    title: Database query performance degradation
+    created_at: "2025-09-12T15:45:00Z"
+    resolved_at: "2025-09-12T18:30:00Z"
+    assigned_user_id: "200002"  # Marcus Washington
+    assigned_user_email: marcus.washington@rootly.com
+    assigned_user_name: Marcus Washington
+    severity: medium
+    status: resolved
+
+  - id: INC_DIV_004
+    title: API rate limiting issues
+    created_at: "2025-09-18T19:15:00Z"  # After hours
+    resolved_at: "2025-09-18T21:00:00Z"
+    assigned_user_id: "200002"  # Marcus Washington
+    assigned_user_email: marcus.washington@rootly.com
+    assigned_user_name: Marcus Washington
+    severity: medium
+    status: resolved
+
+  - id: INC_DIV_005
+    title: Background job queue backup
+    created_at: "2025-09-25T16:30:00Z"
+    resolved_at: "2025-09-25T19:45:00Z"
+    assigned_user_id: "200002"  # Marcus Washington
+    assigned_user_email: marcus.washington@rootly.com
+    assigned_user_name: Marcus Washington
+    severity: high
+    status: resolved
+
+  - id: INC_DIV_006
+    title: Webhook delivery failures
+    created_at: "2025-09-29T13:00:00Z"
+    resolved_at: "2025-09-29T14:30:00Z"
+    assigned_user_id: "200002"  # Marcus Washington
+    assigned_user_email: marcus.washington@rootly.com
+    assigned_user_name: Marcus Washington
+    severity: medium
+    status: resolved
+
+  # Aisha Patel - 7 incidents (high workload, many critical)
+  - id: INC_DIV_007
+    title: Production database failover
+    created_at: "2025-09-11T22:45:00Z"  # Late night
+    resolved_at: "2025-09-12T02:30:00Z"
+    assigned_user_id: "200003"  # Aisha Patel
+    assigned_user_email: aisha.patel@rootly.com
+    assigned_user_name: Aisha Patel
+    severity: critical
+    status: resolved
+
+  - id: INC_DIV_008
+    title: Kubernetes cluster instability
+    created_at: "2025-09-14T20:00:00Z"  # After hours
+    resolved_at: "2025-09-14T23:15:00Z"
+    assigned_user_id: "200003"  # Aisha Patel
+    assigned_user_email: aisha.patel@rootly.com
+    assigned_user_name: Aisha Patel
+    severity: high
+    status: resolved
+
+  - id: INC_DIV_009
+    title: CDN cache invalidation storm
+    created_at: "2025-09-17T01:30:00Z"  # Late night
+    resolved_at: "2025-09-17T04:00:00Z"
+    assigned_user_id: "200003"  # Aisha Patel
+    assigned_user_email: aisha.patel@rootly.com
+    assigned_user_name: Aisha Patel
+    severity: critical
+    status: resolved
+
+  - id: INC_DIV_010
+    title: Storage volume exhaustion
+    created_at: "2025-09-20T19:30:00Z"
+    resolved_at: "2025-09-20T22:45:00Z"
+    assigned_user_id: "200003"  # Aisha Patel
+    assigned_user_email: aisha.patel@rootly.com
+    assigned_user_name: Aisha Patel
+    severity: high
+    status: resolved
+
+  - id: INC_DIV_011
+    title: Network latency spike investigation
+    created_at: "2025-09-23T21:00:00Z"
+    resolved_at: "2025-09-24T00:30:00Z"
+    assigned_user_id: "200003"  # Aisha Patel
+    assigned_user_email: aisha.patel@rootly.com
+    assigned_user_name: Aisha Patel
+    severity: high
+    status: resolved
+
+  - id: INC_DIV_012
+    title: Load balancer configuration error
+    created_at: "2025-09-26T02:15:00Z"  # Late night
+    resolved_at: "2025-09-26T05:00:00Z"
+    assigned_user_id: "200003"  # Aisha Patel
+    assigned_user_email: aisha.patel@rootly.com
+    assigned_user_name: Aisha Patel
+    severity: critical
+    status: resolved
+
+  - id: INC_DIV_013
+    title: Monitoring system alerts misconfiguration
+    created_at: "2025-09-28T18:45:00Z"
+    resolved_at: "2025-09-28T20:30:00Z"
+    assigned_user_id: "200003"  # Aisha Patel
+    assigned_user_email: aisha.patel@rootly.com
+    assigned_user_name: Aisha Patel
+    severity: medium
+    status: resolved
+
+  # David Kim - 3 incidents (moderate workload)
+  - id: INC_DIV_014
+    title: UI component rendering bug
+    created_at: "2025-09-13T11:00:00Z"
+    resolved_at: "2025-09-13T13:45:00Z"
+    assigned_user_id: "200004"  # David Kim
+    assigned_user_email: david.kim@rootly.com
+    assigned_user_name: David Kim
+    severity: medium
+    status: resolved
+
+  - id: INC_DIV_015
+    title: Mobile responsive layout issue
+    created_at: "2025-09-19T14:30:00Z"
+    resolved_at: "2025-09-19T16:00:00Z"
+    assigned_user_id: "200004"  # David Kim
+    assigned_user_email: david.kim@rootly.com
+    assigned_user_name: David Kim
+    severity: low
+    status: resolved
+
+  - id: INC_DIV_016
+    title: Form validation error handling
+    created_at: "2025-09-27T10:15:00Z"
+    resolved_at: "2025-09-27T12:00:00Z"
+    assigned_user_id: "200004"  # David Kim
+    assigned_user_email: david.kim@rootly.com
+    assigned_user_name: David Kim
+    severity: medium
+    status: resolved
+
+  # Elena Rodriguez - 2 incidents (low workload, senior/manager)
+  - id: INC_DIV_017
+    title: Code review process improvement
+    created_at: "2025-09-16T09:30:00Z"
+    resolved_at: "2025-09-16T11:00:00Z"
+    assigned_user_id: "200005"  # Elena Rodriguez
+    assigned_user_email: elena.rodriguez@rootly.com
+    assigned_user_name: Elena Rodriguez
+    severity: low
+    status: resolved
+
+  - id: INC_DIV_018
+    title: Team onboarding documentation update
+    created_at: "2025-09-24T10:00:00Z"
+    resolved_at: "2025-09-24T11:30:00Z"
+    assigned_user_id: "200005"  # Elena Rodriguez
+    assigned_user_email: elena.rodriguez@rootly.com
+    assigned_user_name: Elena Rodriguez
+    severity: low
+    status: resolved

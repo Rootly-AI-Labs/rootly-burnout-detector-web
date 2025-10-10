@@ -1,0 +1,39 @@
+# Scenario: Single Rootly User (Rootly Platform)
+# Description: Single user with one incident - minimal test case without GitHub/Slack
+# Expected Result: Basic burnout analysis with incident data only
+# Platform: Rootly (uses Rootly IDs consistently)
+
+scenario_name: single_rootly_user_rootly
+description: Single user with one incident for basic testing
+
+users:
+  - email: john.doe@rootly.com
+    username: johndoe
+    name: John Doe
+
+    # No GitHub Activity
+    github: null
+
+    # No Slack Activity
+    slack: null
+
+    rootly:
+      id: "100001"
+      slack_id: U01JOHN123
+      time_zone: America/New_York
+      full_name_with_team: "[Engineering] John Doe"
+      phone: "+12125551234"
+      created_at: "2024-01-15T10:00:00Z"
+      updated_at: "2025-10-01T14:30:00Z"
+
+# Single Incident
+incidents:
+  - id: INC_SINGLE_001
+    title: Database connection timeout
+    created_at: "2025-10-05T14:30:00Z"
+    resolved_at: "2025-10-05T15:45:00Z"
+    assigned_user_id: "100001"  # Rootly ID
+    assigned_user_email: john.doe@rootly.com
+    assigned_user_name: John Doe
+    severity: medium
+    status: resolved
