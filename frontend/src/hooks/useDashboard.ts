@@ -1725,12 +1725,12 @@ export default function useDashboard() {
     return Array.isArray(teamAnalysis) ? teamAnalysis : (teamAnalysis?.members || [])
   })();
   
-  // Helper function to get color based on severity
+  // Helper function to get color based on severity (0-100 scale)
   const getFactorColor = (value) => {
-    if (value >= 7) return '#DC2626' // Red - Critical
-    if (value >= 5) return '#F59E0B' // Orange - Warning  
-    if (value >= 3) return '#10B981' // Green - Good
-    return '#6B7280' // Gray - Low risk
+    if (value >= 70) return '#EF4444' // red-500 - Critical
+    if (value >= 50) return '#F97316' // orange-500 - Poor
+    if (value >= 30) return '#F59E0B' // yellow-500 - Fair
+    return '#10B981' // green-500 - Good
   }
   
   // Helper function to get recommendations
