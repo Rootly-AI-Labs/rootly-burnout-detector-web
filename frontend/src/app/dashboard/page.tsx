@@ -47,6 +47,7 @@ import {
   Star,
   Info,
   BarChart3,
+  Sliders,
 } from "lucide-react"
 import { TeamHealthOverview } from "@/components/dashboard/TeamHealthOverview"
 import { AnalysisProgressSection } from "@/components/dashboard/AnalysisProgressSection"
@@ -443,8 +444,8 @@ export default function Dashboard() {
 
           <div className="space-y-2">
             <Separator className="bg-gray-700" />
-            <Button 
-              variant="ghost" 
+            <Button
+              variant="ghost"
               className={`w-full ${sidebarCollapsed ? 'p-2' : ''} justify-start text-gray-300 hover:text-white hover:bg-gray-800`}
               onClick={() => router.push('/methodology')}
               title="Methodology"
@@ -452,8 +453,17 @@ export default function Dashboard() {
               <BookOpen className={`w-4 h-4 ${sidebarCollapsed ? '' : 'mr-2'}`} />
               {!sidebarCollapsed && "Methodology"}
             </Button>
-            <Button 
-              variant="ghost" 
+            <Button
+              variant="ghost"
+              className={`w-full ${sidebarCollapsed ? 'p-2' : ''} justify-start text-gray-300 hover:text-white hover:bg-gray-800`}
+              onClick={() => router.push('/configuration')}
+              title="Configuration"
+            >
+              <Sliders className={`w-4 h-4 ${sidebarCollapsed ? '' : 'mr-2'}`} />
+              {!sidebarCollapsed && "Configuration"}
+            </Button>
+            <Button
+              variant="ghost"
               className={`w-full ${sidebarCollapsed ? 'p-2' : ''} justify-start text-gray-300 hover:text-white hover:bg-gray-800`}
               onClick={handleManageIntegrations}
               title="Manage Integrations"
