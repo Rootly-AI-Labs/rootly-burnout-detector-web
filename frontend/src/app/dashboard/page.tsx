@@ -1207,7 +1207,6 @@ export default function Dashboard() {
                             tick={{ fontSize: 11, fill: '#6B7280' }}
                             tickCount={6}
                             angle={90}
-                            reversed={true}
                           />
                           <Radar 
                             dataKey="value" 

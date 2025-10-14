@@ -564,7 +564,7 @@ export function MemberDetailModal({
                     ]}>
                       <PolarGrid />
                       <PolarAngleAxis dataKey="factor" tick={{ fontSize: 11 }} />
-                      <PolarRadiusAxis domain={[0, 10]} tick={{ fontSize: 9 }} angle={90} reversed={true} />
+                      <PolarRadiusAxis domain={[0, 10]} tick={{ fontSize: 9 }} angle={90}/>
                       <Radar
                         name="Risk Level"
                         dataKey="value"
