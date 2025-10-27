@@ -10,7 +10,7 @@ from .models import create_tables
 from .core.config import settings
 from .core.rate_limiting import limiter, custom_rate_limit_exceeded_handler
 from .middleware.security import security_middleware
-from .api.endpoints import auth, rootly, analysis, analyses, pagerduty, github, slack, llm, mappings, manual_mappings, debug_mappings, migrate, admin, notifications, invitations, surveys
+from .api.endpoints import auth, rootly, analysis, analyses, pagerduty, github, slack, llm, mappings, manual_mappings, debug_mappings, migrate, admin, notifications, invitations, surveys, configuration
 
 # Configure logging based on environment variable
 LOG_LEVEL = getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO)
@@ -180,3 +180,5 @@ app.include_router(notifications.router, prefix="/api", tags=["notifications"])
 app.include_router(invitations.router, prefix="/api", tags=["invitations"])
 app.include_router(surveys.router, prefix="/api/surveys", tags=["surveys"])
 logger.debug("Surveys router registered successfully")
+app.include_router(configuration.router, prefix="/api/configuration", tags=["configuration"])
+logger.debug("Configuration router registered successfully")

@@ -1,7 +1,9 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
+import { toast } from "sonner"
+import { getConfiguration, updateConfiguration, exportConfiguration, importConfiguration } from "@/lib/configuration-api"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -33,6 +35,13 @@ import {
 
 export default function ConfigurationPage() {
   const router = useRouter()
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Loading states
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const [importing, setImporting] = useState(false)
 
   // State for CBI dimension weights
   const [cbiWeights, setCbiWeights] = useState({
@@ -134,6 +143,116 @@ export default function ConfigurationPage() {
     return "None"
   }
 
+  // Load configuration on mount
+  useEffect(() => {
+    loadConfiguration()
+  }, [])
+
+  const loadConfiguration = async () => {
+    try {
+      setLoading(true)
+      const config = await getConfiguration()
+
+      setCbiWeights(config.cbiWeights)
+      setIntegrationImpacts(config.integrationImpacts)
+      setActivePreset(config.activePreset)
+
+      toast.success("Configuration loaded")
+    } catch (error: any) {
+      console.error("Error loading configuration:", error)
+      toast.error(error.message || "Failed to load configuration")
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleSave = async () => {
+    if (!weightsValid) {
+      toast.error("CBI weights must sum to 100% before saving")
+      return
+    }
+
+    try {
+      setSaving(true)
+      await updateConfiguration({
+        cbiWeights,
+        integrationImpacts,
+        activePreset
+      })
+
+      toast.success("Configuration saved successfully")
+    } catch (error: any) {
+      console.error("Error saving configuration:", error)
+      toast.error(error.message || "Failed to save configuration")
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleExport = async () => {
+    try {
+      setExporting(true)
+      const blob = await exportConfiguration()
+
+      // Create download link
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `burnout-config-${new Date().toISOString().split('T')[0]}.json`
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+
+      toast.success("Configuration exported successfully")
+    } catch (error: any) {
+      console.error("Error exporting configuration:", error)
+      toast.error(error.message || "Failed to export configuration")
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    try {
+      setImporting(true)
+      const config = await importConfiguration(file)
+
+      setCbiWeights(config.cbiWeights)
+      setIntegrationImpacts(config.integrationImpacts)
+      setActivePreset(config.activePreset)
+
+      toast.success("Configuration imported successfully")
+    } catch (error: any) {
+      console.error("Error importing configuration:", error)
+      toast.error(error.message || "Failed to import configuration")
+    } finally {
+      setImporting(false)
+      // Reset file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ""
+      }
+    }
+  }
+
+  const triggerFileInput = () => {
+    fileInputRef.current?.click()
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-blue-50 p-6 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading configuration...</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 via-white to-blue-50 p-6">
       <div className="max-w-7xl mx-auto">
@@ -160,17 +279,38 @@ export default function ConfigurationPage() {
               </p>
             </div>
             <div className="flex items-center space-x-3">
-              <Button variant="outline" className="flex items-center space-x-2">
+              <Button
+                variant="outline"
+                className="flex items-center space-x-2"
+                onClick={handleExport}
+                disabled={exporting}
+              >
                 <Download className="w-4 h-4" />
-                <span>Export Config</span>
+                <span>{exporting ? "Exporting..." : "Export Config"}</span>
               </Button>
-              <Button variant="outline" className="flex items-center space-x-2">
+              <Button
+                variant="outline"
+                className="flex items-center space-x-2"
+                onClick={triggerFileInput}
+                disabled={importing}
+              >
                 <Upload className="w-4 h-4" />
-                <span>Import Config</span>
+                <span>{importing ? "Importing..." : "Import Config"}</span>
               </Button>
-              <Button className="flex items-center space-x-2 bg-purple-600 hover:bg-purple-700">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".json"
+                onChange={handleImport}
+                className="hidden"
+              />
+              <Button
+                className="flex items-center space-x-2 bg-purple-600 hover:bg-purple-700"
+                onClick={handleSave}
+                disabled={saving || !weightsValid}
+              >
                 <Save className="w-4 h-4" />
-                <span>Save Changes</span>
+                <span>{saving ? "Saving..." : "Save Changes"}</span>
               </Button>
             </div>
           </div>
